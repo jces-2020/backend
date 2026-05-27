@@ -1,0 +1,27 @@
+# Dependencias principales del backend (Flask + Supabase + Google Auth)
+# Versiones sugeridas estables; ajústalas si tu entorno lo requiere
+Flask>=2.3.3
+flask-cors>=4.0.0
+supabase>=2.7.4
+requests>=2.31.0
+PyJWT>=2.8.0
+google-auth>=2.23.4
+mercadopago==2.2.1
+python-dotenv>=1.0.0
+matplotlib>=3.8.0
+numpy>=1.24.0
+ubigeos-peru>=0.2.2
+APScheduler>=3.10.4
+
+# Pusher (notificaciones en tiempo real a Flutter)
+pusher>=3.3.2
+
+# OneSignal (notificaciones push a dispositivos)
+# Se usa via REST API con requests (no requiere SDK de Python)
+
+# Servidor de producción (recomendado en VPS)
+gunicorn>=21.2.0
+
+# NUEVO: Para integración con backend de reconocimiento de imágenes
+# requests ya estaba, solo asegurar versión mínima
+# aiohttp>=3.9.0  (opcional, para requests async)

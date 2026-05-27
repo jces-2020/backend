@@ -1,0 +1,229 @@
+[
+  {
+    "generado_en": "2026-02-23T20:33:15.763Z",
+    "notificacion_id": "30aa1d5d-1bfb-4560-a082-4e1ba1d40257",
+    "cliente": "JHOSEP CARLOS ELESCANO SOLIS",
+    "fecha": "23/2/2026",
+    "cortes": [],
+    "mermas": [],
+    "productos": [
+      {
+        "producto_id": "e604b2cf-7d66-4cd6-9d38-55085fcf5f98",
+        "nombre": "GRI",
+        "descripcion": "sel",
+        "codigo": null,
+        "grosor": null,
+        "categoria_id": null,
+        "categoria": null,
+        "cantidad": 2,
+        "origen": "plancha"
+      },
+      {
+        "producto_id": "280ebd6d-b463-4ab7-b6ad-be65eccab4c3",
+        "nombre": "Vidrios catedrales",
+        "descripcion": "Vidrio con diseño para lunas",
+        "codigo": "01-V",
+        "grosor": "3.5x3.5",
+        "categoria_id": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "categoria": "VIDRIOS",
+        "cantidad": 2,
+        "origen": "plancha"
+      },
+      {
+        "producto_id": "73f9bb08-8c3c-4a07-8114-0f52ad7dd6f5",
+        "nombre": "Vidrio Gris y bronce",
+        "descripcion": "Vidrios un poco opaco, adecuado para las personas que no le gusta la iluminacion",
+        "codigo": "03-V",
+        "grosor": "2 x 2",
+        "categoria_id": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "categoria": "VIDRIOS",
+        "cantidad": 1,
+        "origen": "corte_sin_merma"
+      }
+    ],
+    "plancha_por_corte": [
+      {
+        "producto_id": "73f9bb08-8c3c-4a07-8114-0f52ad7dd6f5",
+        "producto_nombre": "Vidrio Gris y bronce",
+        "producto_codigo": "03-V",
+        "producto_descripcion": "Vidrios un poco opaco, adecuado para las personas que no le gusta la iluminacion",
+        "categoria_id": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "categoria": "VIDRIOS",
+        "cantidad": 1
+      }
+    ]
+  },
+  {
+    "generado_en": "2026-02-23T20:50:39.406Z",
+    "notificacion_id": "b4090023-1a83-4685-bcf8-8062f01fdb36",
+    "cliente": "ANDREA SOLIS RAMIREZ",
+    "fecha": "23/2/2026",
+    "cortes": [],
+    "mermas": [],
+    "productos": [
+      {
+        "producto_id": "81ef27bc-f881-4e16-b502-bb38c5f767d6",
+        "nombre": "Andru",
+        "descripcion": "Con 3 malcriadas",
+        "codigo": "2414600",
+        "grosor": "5.cm",
+        "categoria_id": "7713197f-b879-42eb-9c85-41fbf90bd9d5",
+        "categoria": "ACCESORIOS",
+        "cantidad": 2,
+        "origen": "plancha"
+      },
+      {
+        "producto_id": "ccb7dbf8-c57e-4f5e-aa03-932036ab23c5",
+        "nombre": "Vidrio transparente",
+        "descripcion": "Este es un vidrio que es diseñado para una mejor iluminacion",
+        "codigo": "02-V",
+        "grosor": "4 x 4",
+        "categoria_id": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "categoria": "VIDRIOS",
+        "cantidad": 2,
+        "origen": "plancha"
+      }
+    ],
+    "plancha_por_corte": []
+  },
+  {
+    "generado_en": "2026-03-04T18:31:47.701Z",
+    "notificacion_id": "a2997bdb-3ca7-4aad-a028-f4d159f61199",
+    "cliente": "76411312 - JHOSEP CARLOS ELESCANO SOLIS",
+    "fecha": "4/3/2026",
+    "cortes": [],
+    "mermas": [
+      {
+        "alto_cm": 40,
+        "ancho_cm": 50,
+        "area": 2000,
+        "cantidad": 2,
+        "categoria": {
+          "descripcion": "VIDRIOS"
+        },
+        "descripción": "Retazo",
+        "fecha_registro": "2026-02-22T17:38:40.599184",
+        "id_categoria": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "id_merma": "8205b738-ed3a-4b25-af7c-94c10b8ce99b",
+        "lugar": "Rack Vidrio A",
+        "nombre": "V-001"
+      },
+      {
+        "alto_cm": 60,
+        "ancho_cm": 80,
+        "area": 4800,
+        "cantidad": 1,
+        "categoria": {
+          "descripcion": "VIDRIOS"
+        },
+        "descripción": "Sobrante",
+        "fecha_registro": "2026-02-22T17:38:40.599184",
+        "id_categoria": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "id_merma": "ecdf31bc-9ad1-4b53-953c-7186224ef3cd",
+        "lugar": "Rack Vidrio A",
+        "nombre": "V-002"
+      },
+      {
+        "alto_cm": 5,
+        "ancho_cm": 150,
+        "area": 750,
+        "cantidad": 2,
+        "categoria": {
+          "descripcion": "ALUMINIOS"
+        },
+        "descripción": "Perfil",
+        "fecha_registro": "2026-02-22T17:38:40.599184",
+        "id_categoria": "6f742b22-c860-4258-b264-f00ec82f7a2d",
+        "id_merma": "f933f99f-2b36-4c88-a01e-06014021757d",
+        "lugar": "Zona Corte",
+        "nombre": "A-002"
+      }
+    ],
+    "productos": [],
+    "plancha_por_corte": []
+  },
+  {
+    "generado_en": "2026-03-06T17:43:05.612Z",
+    "notificacion_id": "8fa8ef47-b24e-4c77-9314-fb1e8d5923e0",
+    "cliente": "JHOSEP CARLOS ELESCANO SOLIS",
+    "fecha": "6/3/2026",
+    "cortes": [],
+    "mermas": [],
+    "productos": [],
+    "plancha_por_corte": [
+      {
+        "producto_id": "280ebd6d-b463-4ab7-b6ad-be65eccab4c3",
+        "producto_nombre": "Vidrios Catedrales",
+        "producto_codigo": "01-V",
+        "producto_descripcion": "Vidrio con diseño para lunas",
+        "categoria_id": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "categoria": "VIDRIOS",
+        "cantidad": 1
+      }
+    ]
+  },
+  {
+    "generado_en": "2026-03-06T17:52:13.628Z",
+    "notificacion_id": "a0a1bcf4-32f8-4d2f-991c-091e2b697303",
+    "cliente": "JHOSEP CARLOS ELESCANO SOLIS",
+    "fecha": "6/3/2026",
+    "cortes": [],
+    "mermas": [
+      {
+        "alto_cm": 90,
+        "ancho_cm": 120,
+        "area": 10800,
+        "cantidad": 3,
+        "descripción": "Grande",
+        "fecha_registro": "2026-02-22T17:38:40.599184",
+        "id_categoria": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "id_merma": "5386a1f4-6e8e-483f-8b60-281253f4aed7",
+        "lugar": "Rack Vidrio B",
+        "nombre": "V-003",
+        "_corteMatch": {
+          "alto_cm": 100,
+          "ancho_cm": 100,
+          "area_m2": 1,
+          "cantidad": 1,
+          "estado": "pendiente",
+          "id_corte": "30b53e29-3a38-47e3-9de9-5fe2ffc4a162"
+        },
+        "descripcion": "Grande"
+      }
+    ],
+    "productos": [],
+    "plancha_por_corte": []
+  },
+  {
+    "generado_en": "2026-03-06T17:55:28.429Z",
+    "notificacion_id": "7f50d4e7-e3b7-43df-b02d-b8f7040207f9",
+    "cliente": "JHOSEP CARLOS ELESCANO SOLIS",
+    "fecha": "6/3/2026",
+    "cortes": [],
+    "mermas": [
+      {
+        "alto_cm": 70,
+        "ancho_cm": 100,
+        "area": 7000,
+        "cantidad": 2,
+        "descripción": "Retazo",
+        "fecha_registro": "2026-02-22T17:38:40.599184",
+        "id_categoria": "bd9e146c-09ca-4423-94f6-974237d4b4f6",
+        "id_merma": "a7f0e16f-d8cf-44e3-87d6-807f055d3044",
+        "lugar": "Rack Vidrio C",
+        "nombre": "V-005",
+        "_corteMatch": {
+          "alto_cm": 100,
+          "ancho_cm": 100,
+          "area_m2": 1,
+          "cantidad": 1,
+          "estado": "pendiente",
+          "id_corte": "1665a79a-70db-4ed3-9501-2cb27b0f2546"
+        },
+        "descripcion": "Retazo"
+      }
+    ],
+    "productos": [],
+    "plancha_por_corte": []
+  }
+]
