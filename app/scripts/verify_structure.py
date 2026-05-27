@@ -7,7 +7,6 @@ import os
 import sys
 from pathlib import Path
 
-
 def verificar_archivos():
     """Verifica que todos los archivos necesarios existan"""
 
