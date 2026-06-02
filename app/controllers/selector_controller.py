@@ -231,6 +231,7 @@ def login_almacen():
         # Obtener tipo de personal
         tipo_personal = _obtener_tipo_personal(personal.get('tipo_personal_id'))
         
+        
         response_data = {
             "area_id": area_id,
             "area": "ALMACÉN",
