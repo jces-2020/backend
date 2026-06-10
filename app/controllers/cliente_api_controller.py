@@ -17,6 +17,13 @@ from flask import Blueprint, request, jsonify
 from app.services.cliente_service import ClienteService
 from app.repositories.cliente_repository import ClienteRepository
 from app.services.supabase_client import supabase
+from app.controllers.clientes_controller import _build_jwt_for_cliente
+from app.services.email_verification_service import (
+    create_verification,
+    consume_verification,
+    get_verification,
+    send_verification_email,
+)
 from app.core.exceptions import (
     AppException,
     EntityNotFoundException,
@@ -79,7 +86,17 @@ def crear_cliente():
     try:
         data = request.get_json() or {}
         cliente = _service.crear_cliente(data)
-        return _success_response(cliente.to_dict(), "Cliente creado", 201)
+        verification = create_verification(cliente.id_cliente, cliente.correo, cliente.nombre)
+        entry = get_verification(verification["verification_token"])
+        if entry:
+            send_verification_email(entry.correo, entry.nombre, entry.codigo, int(verification["ttl_minutes"]))
+
+        return _success_response({
+            **cliente.to_dict(),
+            "verification_token": verification["verification_token"],
+            "correo_verificacion_enviado": True,
+            "registro_completo": False,
+        }, "Cliente creado. Revisa tu correo para verificar tu cuenta.", 201)
 
     except InvalidDataException as e:
         return _error_response(e)
@@ -88,6 +105,35 @@ def crear_cliente():
     except Exception as e:
         print(f"Error en crear_cliente: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@cliente_api_bp.route('/verificar-correo', methods=['POST'])
+def verificar_correo():
+    data = request.get_json() or {}
+    token = (data.get('verification_token') or '').strip()
+    codigo = (data.get('codigo') or '').strip()
+
+    if not token or not codigo:
+        return jsonify({'success': False, 'message': 'Token y código son requeridos'}), 400
+
+    entry = consume_verification(token, codigo)
+    if not entry:
+        return jsonify({'success': False, 'message': 'Código incorrecto o expirado'}), 400
+
+    try:
+        updated = supabase.table('cliente').update({'registro_completo': True}).eq('id_cliente', entry.cliente_id).execute()
+        cliente = updated.data[0] if updated.data else None
+        if not cliente:
+            return jsonify({'success': False, 'message': 'No se pudo actualizar el cliente'}), 500
+
+        return _success_response({
+            'cliente': cliente,
+            'token': _build_jwt_for_cliente(cliente),
+            'token_type': 'Bearer'
+        }, 'Correo verificado correctamente', 200)
+    except Exception as e:
+        print(f"Error verificando correo: {str(e)}")
+        return jsonify({'success': False, 'message': 'No se pudo verificar el correo'}), 500
 
 
 @cliente_api_bp.route('', methods=['GET'])

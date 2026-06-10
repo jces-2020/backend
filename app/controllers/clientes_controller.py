@@ -1,6 +1,12 @@
 from flask import Blueprint, jsonify, request
 import os, json, base64, hmac, hashlib, time
 from app.services.supabase_client import supabase
+from app.services.email_verification_service import (
+    create_verification,
+    consume_verification,
+    get_verification,
+    send_verification_email,
+)
 
 clientes_bp = Blueprint('clientes', __name__)
 
@@ -113,14 +119,24 @@ def add_cliente():
         'contraseña': contraseña,
         'nombre': nombre,
         'documento': data.get('documento'),
-        'tipo_cliente_id': tipo_cliente_id
+        'tipo_cliente_id': tipo_cliente_id,
+        'registro_completo': False,
     }
     try:
         response = supabase.table('cliente').insert(nuevo_cliente).execute()
         if response.data:
             cliente = response.data[0]
-            token = _build_jwt_for_cliente(cliente)
-            return jsonify({'success': True, 'cliente': cliente, 'token': token, 'token_type': 'Bearer'}), 201
+            verification = create_verification(cliente['id_cliente'], cliente.get('correo', correo), cliente.get('nombre', nombre))
+            entry = get_verification(verification['verification_token'])
+            if entry:
+                send_verification_email(entry.correo, entry.nombre, entry.codigo, int(verification['ttl_minutes']))
+            return jsonify({
+                'success': True,
+                'message': 'Cliente creado. Revisa tu correo para verificar tu cuenta.',
+                'cliente': cliente,
+                'verification_token': verification['verification_token'],
+                'ttl_minutes': int(verification['ttl_minutes']),
+            }), 201
         else:
             err = response.error or {}
             msg = str(err.get('message') or err)
@@ -136,11 +152,13 @@ def login_cliente():
     correo = (data.get('correo') or '').strip().lower()
     contraseña = data.get('contraseña')
     # Busca el cliente por correo
-    response = supabase.table('cliente').select('id_cliente, correo, contraseña, nombre, numero, documento, "tipo cliente"').eq('correo', correo).execute()
+    response = supabase.table('cliente').select('id_cliente, correo, contraseña, nombre, numero, documento, registro_completo, "tipo cliente"').eq('correo', correo).execute()
     clientes = response.data
     if not clientes:
         return jsonify({'success': False, 'message': 'Correo incorrecto'}), 404
     cliente = clientes[0]
+    if not bool(cliente.get('registro_completo')):
+        return jsonify({'success': False, 'message': 'Correo pendiente de verificación'}), 403
     # Verificar contraseña primero: si es correcta, permitir acceso sin importar el método de registro
     if cliente['contraseña'] == contraseña:
         token = _build_jwt_for_cliente(cliente)
@@ -150,6 +168,36 @@ def login_cliente():
     if isinstance(tipo_cliente_label, str) and tipo_cliente_label.lower() == 'google':
         return jsonify({'success': False, 'message': 'Este usuario fue registrado con Google. Vuelve a iniciar sesión con Google.'}), 403
     return jsonify({'success': False, 'message': 'Contraseña incorrecta'}), 401
+
+
+@clientes_bp.route('/api/clientes/verificar-correo', methods=['POST'])
+def verificar_correo():
+    data = request.json or {}
+    token = (data.get('verification_token') or '').strip()
+    codigo = (data.get('codigo') or '').strip()
+
+    if not token or not codigo:
+        return jsonify({'success': False, 'message': 'Token y código son requeridos'}), 400
+
+    entry = consume_verification(token, codigo)
+    if not entry:
+        return jsonify({'success': False, 'message': 'Código incorrecto o expirado'}), 400
+
+    try:
+        upd = supabase.table('cliente').update({'registro_completo': True}).eq('id_cliente', entry.cliente_id).execute()
+        cliente = upd.data[0] if upd.data else None
+        if not cliente:
+            return jsonify({'success': False, 'message': 'No se pudo actualizar el cliente'}), 500
+
+        return jsonify({
+            'success': True,
+            'message': 'Correo verificado correctamente',
+            'cliente': cliente,
+            'token': _build_jwt_for_cliente(cliente),
+            'token_type': 'Bearer'
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': 'No se pudo verificar el correo', 'error': str(e)}), 500
 
 @clientes_bp.route('/api/clientes/me', methods=['GET'])
 def get_cliente_actual():
