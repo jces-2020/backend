@@ -57,8 +57,17 @@ def consulta_documento():
         print(f"Status code ApisPeru: {res.status_code}")
         print(f"Respuesta ApisPeru (raw): {res.text}")
 
-        # La respuesta de ApisPeru puede venir con status 200 pero con un mensaje de error si no encuentra el documento
-        data_json = res.json()
+        raw_text = (res.text or "").strip()
+        if not raw_text:
+            print("[DEBUG] Respuesta vacía desde ApisPeru")
+            return jsonify({"success": False, "error": "No se encontró información para este documento.", "nombre": ""}), 200
+
+        try:
+            data_json = res.json()
+        except ValueError:
+            print(f"[DEBUG] Respuesta no JSON desde ApisPeru: {raw_text[:200]}")
+            return jsonify({"success": False, "error": "No se encontró información para este documento.", "nombre": ""}), 200
+
         print(f"Respuesta ApisPeru (json): {data_json}")
 
         if res.status_code == 200 and 'success' not in data_json and 'error' not in data_json:
