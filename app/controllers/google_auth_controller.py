@@ -70,7 +70,8 @@ def google_register():
             'nombre': nombre_final,
             'numero': '',
             'documento': '',
-            'tipo cliente': 'google'
+            'tipo cliente': 'google',
+            'registro_completo': True
         }).execute()
         user = insert_resp.data[0] if insert_resp.data else None
         id_cliente = user['id_cliente'] if user and 'id_cliente' in user else None

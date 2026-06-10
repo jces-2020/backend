@@ -300,7 +300,8 @@ class ClienteService(BaseService):
             'contraseña': data.get('contraseña'),  # En prod, hashear!
             'tipo_cliente_id': data.get('tipo_cliente_id'),
             'estado_cliente_id': data.get('estado_cliente_id'),
-            'cuenta_temporal': data.get('cuenta_temporal', False)
+            'cuenta_temporal': data.get('cuenta_temporal', False),
+            'registro_completo': data.get('registro_completo', False)
         }
 
     def _prepare_data_for_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -324,6 +325,9 @@ class ClienteService(BaseService):
 
         if 'cuenta_temporal' in data:
             prepared['cuenta_temporal'] = data['cuenta_temporal']
+
+        if 'registro_completo' in data:
+            prepared['registro_completo'] = data['registro_completo']
 
         return prepared
 
