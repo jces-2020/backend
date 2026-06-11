@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, render_template, request
 # Asegúrate de que app.services.supabase_client.supabase esté correctamente configurado
 from app.services.supabase_client import supabase 
 import requests
+import os
 
 tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
@@ -62,13 +63,13 @@ def consulta_documento():
         raw_text = (res.text or "").strip()
         if not raw_text:
             print("[DEBUG] Respuesta vacía desde ApisPeru")
-            return jsonify({"success": False, "error": "No se encontró información para este documento.", "nombre": ""}), 200
+            return jsonify({"success": False, "error": f"ApisPeru respondió {res.status_code} sin contenido.", "nombre": ""}), 200
 
         try:
             data_json = res.json()
         except ValueError:
             print(f"[DEBUG] Respuesta no JSON desde ApisPeru: {raw_text[:200]}")
-            return jsonify({"success": False, "error": "No se encontró información para este documento.", "nombre": ""}), 200
+            return jsonify({"success": False, "error": f"ApisPeru respondió {res.status_code}: {raw_text[:200]}", "nombre": ""}), 200
 
         print(f"Respuesta ApisPeru (json): {data_json}")
 
@@ -90,7 +91,7 @@ def consulta_documento():
             return jsonify({"success": True, "data": data_json}), 200
 
         # Manejo de respuestas exitosas sin el flag success o con error explícito
-        error_msg = data_json.get("message") or data_json.get("error") or "No se encontró información para este documento."
+        error_msg = data_json.get("message") or data_json.get("error") or f"ApisPeru respondió {res.status_code}."
         print(f"Error devuelto: {error_msg}")
         return jsonify({"success": False, "error": error_msg, "nombre": ""}), 200
 
@@ -102,4 +103,3 @@ def consulta_documento():
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Error interno en el servidor: {e}", "nombre": ""}), 200
-        
