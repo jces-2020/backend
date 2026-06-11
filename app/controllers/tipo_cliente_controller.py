@@ -102,3 +102,4 @@ def consulta_documento():
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Error interno en el servidor: {e}", "nombre": ""}), 200
+        
