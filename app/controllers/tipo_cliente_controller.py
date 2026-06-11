@@ -5,9 +5,11 @@ import requests
 
 tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
-# Token de ApisPeru CORREGIDO
-# Debe ser exactamente: e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y
-APISPERU_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+# Token de ApisPeru desde entorno; fallback al valor configurado en credenciales/.env
+APISPERU_TOKEN = os.environ.get(
+    "APISPERU_TOKEN",
+    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+)
 
 @tipo_documento_bp.route('/api/tipo_documento', methods=['GET'])
 def get_tipo_documento():
@@ -70,29 +72,27 @@ def consulta_documento():
 
         print(f"Respuesta ApisPeru (json): {data_json}")
 
-        if res.status_code == 200 and 'success' not in data_json and 'error' not in data_json:
+        api_success = bool(data_json.get("success", False))
+        if res.status_code == 200 and api_success:
             nombre = ""
-            # Mostrar el nombre correctamente
             if tipo == "DNI":
                 nombre = f"{data_json.get('nombres','')} {data_json.get('apellidoPaterno','')} {data_json.get('apellidoMaterno','')}".strip()
                 if not nombre:
-                     # Caso donde no hay nombre pero el status es 200
                     return jsonify({"success": False, "error": "No se encontró nombre para este DNI.", "nombre": ""}), 200
-                return jsonify({"success": True, "nombre": nombre, "data": data_json}), 200
-            elif tipo == "RUC":
-                nombre = data_json.get('razonSocial','')
+                return jsonify({"success": True, "nombre": nombre, "html": nombre, "data": data_json}), 200
+
+            if tipo == "RUC":
+                nombre = data_json.get('razonSocial', '').strip()
                 if not nombre:
-                    # Caso donde no hay razón social pero el status es 200
                     return jsonify({"success": False, "error": "No se encontró razón social para este RUC.", "nombre": ""}), 200
-                return jsonify({"success": True, "nombre": nombre, "data": data_json}), 200
-            else:
-                return jsonify({"success": True, "data": data_json}), 200
-        else:
-            # Manejo de errores 4xx/5xx o respuestas 200 con JSON de error
-            error_msg = data_json.get("message") or data_json.get("error") or "No se encontró información para este documento."
-            print(f"Error devuelto: {error_msg}")
-            # Siempre responder 200 para que el frontend no rompa la promesa
-            return jsonify({"success": False, "error": error_msg, "nombre": ""}), 200
+                return jsonify({"success": True, "nombre": nombre, "html": nombre, "data": data_json}), 200
+
+            return jsonify({"success": True, "data": data_json}), 200
+
+        # Manejo de respuestas exitosas sin el flag success o con error explícito
+        error_msg = data_json.get("message") or data_json.get("error") or "No se encontró información para este documento."
+        print(f"Error devuelto: {error_msg}")
+        return jsonify({"success": False, "error": error_msg, "nombre": ""}), 200
 
     except requests.exceptions.Timeout:
         print("Timeout al conectar con ApisPeru")
@@ -102,4 +102,3 @@ def consulta_documento():
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Error interno en el servidor: {e}", "nombre": ""}), 200
-        
