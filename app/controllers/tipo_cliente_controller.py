@@ -6,11 +6,9 @@ import os
 
 tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
-# Token de ApisPeru desde entorno; fallback al valor configurado en credenciales/.env
-APISPERU_TOKEN = os.environ.get(
-    "APISPERU_TOKEN",
-    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
-)
+# Token de ApisPeru fijado en este controller para evitar que un valor viejo
+# del entorno sobreescriba la consulta de DNI/RUC.
+APISPERU_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
 
 @tipo_documento_bp.route('/api/tipo_documento', methods=['GET'])
 def get_tipo_documento():
