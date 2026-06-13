@@ -80,3 +80,4 @@ def obtener_items_con_detalles(carrito_id):
         return jsonify({'success': True, 'data': joined}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
