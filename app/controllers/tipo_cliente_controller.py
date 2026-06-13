@@ -7,7 +7,7 @@ tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
 # Token exclusivo para consultas DNI/RUC.
 # No usar el token de facturación; son credenciales distintas.
-APISPERU_DNIRUC_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+APISPERU_DNIRUC_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbmVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
 
 APISPERU_HEADERS = {
     "Accept": "application/json, text/plain, */*",
