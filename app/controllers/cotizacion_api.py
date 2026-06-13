@@ -1,19 +1,14 @@
 import requests
 from flask import Blueprint, request, jsonify
-import os
 
 bp_html = Blueprint('cotizacion_api', __name__)
 
-# Token fijo - NUNCA usar variable de entorno (puede estar vencida o ser diferente)
-# Este es el token actualizado que funciona
+# Token fijo para DNI/RUC. No depende de variables de entorno.
 APISPERU_TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbmVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y'
-
-# Asegurar que no se use variable de entorno
-os.environ.pop('APISPERU_TOKEN', None)
 
 @bp_html.route('/api/consulta_documento_html', methods=['POST'])
 def consulta_documento_html():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     tipo = (data.get('tipo') or '').upper()
     numero = (data.get('numero') or '').strip()
 
@@ -51,21 +46,18 @@ def consulta_documento_html():
         if tipo == 'DNI':
             nombre = f"{j.get('nombres', '')} {j.get('apellidoPaterno', '')} {j.get('apellidoMaterno', '')}".strip()
             print(f"[DEBUG] DNI encontrado: {nombre}")
-            return jsonify({'success': True, 'html': nombre}), 200
-        elif tipo == 'RUC':
+            return jsonify({'success': True, 'nombre': nombre, 'html': nombre}), 200
+
+        if tipo == 'RUC':
             razon_social = j.get('razonSocial', '')
             print(f"[DEBUG] RUC encontrado: {razon_social}")
-            return jsonify({'success': True, 'html': razon_social}), 200
+            return jsonify({'success': True, 'nombre': razon_social, 'html': razon_social}), 200
 
     except requests.exceptions.Timeout:
         print("[DEBUG] Timeout al consultar APISPERU")
         return jsonify({'success': False, 'message': 'No se pudo conectar con ApisPeru (timeout).'}), 500
     except requests.exceptions.RequestException as e:
         print(f"[DEBUG] Error de requests: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error consultando APISPERU', 'error': str(e)}), 500
-    except Exception as e:
-        print(f"[DEBUG] Error inesperado: {str(e)}")
-        return jsonify({'success': False, 'message': 'Error inesperado', 'error': str(e)}), 500
         return jsonify({'success': False, 'message': 'Error consultando APISPERU', 'error': str(e)}), 500
     except Exception as e:
         print(f"[DEBUG] Error inesperado: {str(e)}")
