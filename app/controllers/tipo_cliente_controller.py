@@ -6,9 +6,9 @@ import os
 
 tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
-# Token de ApisPeru fijado en este controller para evitar que un valor viejo
-# del entorno sobreescriba la consulta de DNI/RUC.
-APISPERU_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+# Token exclusivo para consultas DNI/RUC.
+# No usar el token de facturación; son credenciales distintas.
+APISPERU_DNIRUC_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
 
 @tipo_documento_bp.route('/api/tipo_documento', methods=['GET'])
 def get_tipo_documento():
@@ -44,11 +44,11 @@ def consulta_documento():
     if tipo == "DNI":
         if len(numero) != 8 or not numero.isdigit():
             return jsonify({"success": False, "error": "El DNI debe tener 8 dígitos numéricos."}), 400
-        url = f"https://dniruc.apisperu.com/api/v1/dni/{numero}?token={APISPERU_TOKEN}"
+        url = f"https://dniruc.apisperu.com/api/v1/dni/{numero}?token={APISPERU_DNIRUC_TOKEN}"
     elif tipo == "RUC":
         if len(numero) != 11 or not numero.isdigit():
             return jsonify({"success": False, "error": "El RUC debe tener 11 dígitos numéricos."}), 400
-        url = f"https://dniruc.apisperu.com/api/v1/ruc/{numero}?token={APISPERU_TOKEN}"
+        url = f"https://dniruc.apisperu.com/api/v1/ruc/{numero}?token={APISPERU_DNIRUC_TOKEN}"
     else:
         return jsonify({"success": False, "error": "Tipo de documento inválido. Solo se acepta DNI o RUC."}), 400
         
