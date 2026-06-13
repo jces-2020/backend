@@ -2,13 +2,24 @@ from flask import Blueprint, jsonify, render_template, request
 # Asegúrate de que app.services.supabase_client.supabase esté correctamente configurado
 from app.services.supabase_client import supabase 
 import requests
-import os
 
 tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
 # Token exclusivo para consultas DNI/RUC.
 # No usar el token de facturación; son credenciales distintas.
 APISPERU_DNIRUC_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+
+APISPERU_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    ),
+}
 
 @tipo_documento_bp.route('/api/tipo_documento', methods=['GET'])
 def get_tipo_documento():
@@ -33,7 +44,7 @@ def test_apisperu():
 @tipo_documento_bp.route('/api/consulta_documento', methods=['POST'])
 def consulta_documento():
     """Consulta la API de ApisPeru desde el backend (Función Centralizada)."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     # Convertimos a mayúsculas para la validación
     tipo = (data.get('tipo') or '').upper() 
     numero = (data.get('numero') or '').strip()
@@ -54,7 +65,7 @@ def consulta_documento():
         
     print(f"URL consultada: {url}")
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=10, headers=APISPERU_HEADERS)
         print(f"Status code ApisPeru: {res.status_code}")
         print(f"Respuesta ApisPeru (raw): {res.text}")
 
