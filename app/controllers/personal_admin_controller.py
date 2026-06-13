@@ -37,6 +37,7 @@ def create_personal_endpoint():
     tipo_personal_id = data.get("tipo_personal_id")
     cv = data.get("cv")
     fecha_nacimiento = data.get("fecha_nacimiento")
+    email = (data.get("email") or "").strip()
 
     if not nombre:
         return jsonify({"success": False, "message": "Nombre requerido"}), 400
@@ -49,6 +50,7 @@ def create_personal_endpoint():
         tipo_personal_id=tipo_personal_id,
         cv=cv,
         fecha_nacimiento=fecha_nacimiento,
+        email=email,
     )
     if personal:
         return jsonify({"success": True, "message": "Personal creado", "data": personal}), 201
