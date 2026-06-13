@@ -192,33 +192,6 @@ def create_pago(personal_id: str, monto: float, fecha: str) -> Optional[Dict[str
         return None
 
 
-def create_gasto_personal_todos(
-    monto: float,
-    fecha: str,
-    caja_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    Crea un gasto por pago a todo el personal.
-    Registra el tipo fijo como 'personal todos' en la tabla gastos.
-    """
-    try:
-        insert_data: Dict[str, Any] = {
-            "monto": monto,
-            "fecha": fecha,
-            "tipo": "personal todos",
-        }
-        if caja_id:
-            insert_data["caja_id"] = caja_id
-
-        result = supabase.table("gastos").insert(insert_data).execute()
-        if result.data:
-            return result.data[0]
-        return None
-    except Exception as exc:  # noqa: BLE001
-        print(f"[personal_service] error creating gasto personal todos: {exc}")
-        return None
-
-
 def create_gasto_personal_bono(
     monto: float,
     fecha: str,
@@ -339,7 +312,6 @@ __all__ = [
     "add_bono_to_personal",
     "remove_bono_from_personal",
     "create_pago",
-    "create_gasto_personal_todos",
     "create_gasto_personal_bono",
     "create_gasto_personal",
     "upload_cv_pdf",

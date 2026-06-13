@@ -15,7 +15,6 @@ from services.personal_service import (
     create_pago,
     create_gasto_personal_bono,
     create_gasto_personal,
-    create_gasto_personal_todos,
     upload_cv_pdf,
 )
 
@@ -197,41 +196,6 @@ def register_pago(personal_id):
         })
 
     return jsonify({"success": False, "message": "Error al registrar pago"}), 500
-
-
-@personal_admin_bp.route("/api/personal/pago-todos", methods=["POST"])
-def register_pago_todos():
-    """Registra un pago mensual para todo el personal y crea un gasto total."""
-    data = request.get_json()
-    monto = data.get("monto")
-    fecha_pago = data.get("fecha") or str(date.today())
-    caja_id = data.get("caja_id")
-
-    if monto is None:
-        return jsonify({"success": False, "message": "Monto requerido"}), 400
-
-    try:
-        monto_float = float(monto)
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "message": "Monto invalido"}), 400
-
-    if monto_float <= 0:
-        return jsonify({"success": False, "message": "Monto debe ser mayor a 0"}), 400
-
-    gasto = create_gasto_personal_todos(monto_float, fecha_pago, caja_id)
-    pago = create_pago("", monto_float, fecha_pago)
-
-    if pago and gasto:
-        return jsonify({
-            "success": True,
-            "message": "Pago mensual registrado para todo el personal",
-            "data": {
-                "pago": pago,
-                "gasto": gasto,
-            },
-        })
-
-    return jsonify({"success": False, "message": "Error al registrar pago para todo el personal"}), 500
 
 
 @personal_admin_bp.route("/api/personal/<personal_id>/pago-bono", methods=["POST"])
