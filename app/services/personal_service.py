@@ -50,7 +50,7 @@ def create_personal(
     tipo_personal_id: Optional[str] = None,
     cv: Optional[str] = None,
     fecha_nacimiento: Optional[str] = None,
-    email: Optional[str] = None,
+    correo: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Crea un nuevo personal.
@@ -67,8 +67,8 @@ def create_personal(
             insert_data["cv"] = cv.strip()
         if fecha_nacimiento:
             insert_data["fecha_nacimiento"] = fecha_nacimiento
-        if email:
-            insert_data["email"] = email.strip()
+        if correo:
+            insert_data["correo"] = correo.strip()
 
         result = supabase.table("personal").insert(insert_data).execute()
         if result.data:
