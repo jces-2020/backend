@@ -80,35 +80,43 @@ def validar_email():
     }
     """
     try:
+        print("[VALIDAR EMAIL] Recibida solicitud")
         data = request.get_json() or {}
+        print(f"[VALIDAR EMAIL] Data recibida: {data}")
         correo = (data.get('correo') or '').strip().lower()
         contraseña = (data.get('contraseña') or '').strip()
 
+        print(f"[VALIDAR EMAIL] Correo: {correo}, Contraseña: {'*' * len(contraseña)}")
+
         if not correo or not contraseña:
+            print("[VALIDAR EMAIL] Faltan correo o contraseña")
             return jsonify({'success': False, 'email_valido': False, 'message': 'Correo y contraseña requeridos.'}), 400
 
         if not EMAIL_PATTERN.match(correo):
+            print(f"[VALIDAR EMAIL] Email no cumple patrón: {correo}")
             return jsonify({'success': False, 'email_valido': False, 'message': 'Correo electrónico inválido.'}), 400
 
         # Verificar que no esté duplicado
         existe = supabase.table('cliente').select('id_cliente').eq('correo', correo).limit(1).execute()
         if existe.data:
+            print(f"[VALIDAR EMAIL] Correo ya registrado: {correo}")
             return jsonify({'success': False, 'email_valido': False, 'message': 'El correo ya está registrado.'}), 409
 
         # Crear usuario temporal en Supabase Auth
-        print(f"[DEBUG VALIDAR] Creando usuario temporal para validar: {correo}")
+        print(f"[VALIDAR EMAIL] Creando usuario temporal para: {correo}")
         auth_user = supabase.auth.admin.create_user({
             "email": correo,
             "password": contraseña,
             "email_confirm": False
         })
         auth_id = auth_user.user.id
-        print(f"[DEBUG VALIDAR] Usuario temporal creado: {auth_id}")
+        print(f"[VALIDAR EMAIL] Usuario temporal creado: {auth_id}")
 
         # Intentar enviar email de confirmación
         try:
+            print(f"[VALIDAR EMAIL] Intentando enviar email a: {correo}")
             supabase.auth.admin.send_user_invitation_email(auth_id)
-            print(f"[EMAIL VALIDAR] Email de confirmación enviado a {correo}")
+            print(f"[VALIDAR EMAIL] Email enviado exitosamente a {correo}")
             # Si éxito, devolver el auth_id para que el frontend lo use en el registro
             return jsonify({
                 'success': True,
@@ -117,17 +125,17 @@ def validar_email():
                 'message': 'Email válido. Procede a completar tu registro.'
             }), 200
         except Exception as e:
-            print(f"[EMAIL ERROR VALIDAR] Error enviando email: {e}")
+            print(f"[VALIDAR EMAIL] Error enviando email: {e}")
             # Si falla, eliminar el usuario temporal
             try:
                 supabase.auth.admin.delete_user(auth_id)
-                print(f"[DEBUG VALIDAR] Usuario temporal eliminado: {auth_id}")
+                print(f"[VALIDAR EMAIL] Usuario temporal eliminado: {auth_id}")
             except Exception as delete_error:
-                print(f"[ERROR] No se pudo eliminar usuario temporal: {delete_error}")
+                print(f"[VALIDAR EMAIL] Error eliminando usuario: {delete_error}")
             return jsonify({'success': False, 'email_valido': False, 'message': 'Gmail inválido. Verifica que sea correcto.'}), 400
 
     except Exception as e:
-        print(f"[EXCEPTION VALIDAR EMAIL] {e}")
+        print(f"[VALIDAR EMAIL] EXCEPCIÓN: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'email_valido': False, 'message': f'Error al validar email: {str(e)}'}), 500
