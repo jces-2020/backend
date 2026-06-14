@@ -97,13 +97,20 @@ def add_cliente():
         return jsonify({'success': False, 'message': 'El correo ya está registrado.'}), 409
 
     try:
+        print(f"[DEBUG] Intentando crear usuario de auth para: {correo}")
+
         # 1. Crear usuario en Supabase Auth (envía email automáticamente)
-        auth_user = supabase.auth.admin.create_user({
-            "email": correo,
-            "password": contraseña,
-            "email_confirm": False
-        })
-        auth_id = auth_user.user.id
+        try:
+            auth_user = supabase.auth.admin.create_user({
+                "email": correo,
+                "password": contraseña,
+                "email_confirm": False
+            })
+            auth_id = auth_user.user.id
+            print(f"[DEBUG] Usuario de auth creado: {auth_id}")
+        except Exception as auth_error:
+            print(f"[ERROR AUTH] {auth_error}")
+            raise auth_error
 
         # 2. Resolver tipo_cliente_id desde la descripción (DNI / RUC)
         tipo_documento_desc = (data.get('tipo_documento') or '').strip().upper()
@@ -113,10 +120,14 @@ def add_cliente():
                 td = supabase.table('tipo_documento').select('id_tipo').ilike('descripcion', tipo_documento_desc).limit(1).execute()
                 if td.data:
                     tipo_cliente_id = td.data[0]['id_tipo']
-            except Exception:
+                    print(f"[DEBUG] tipo_cliente_id encontrado: {tipo_cliente_id}")
+            except Exception as e:
+                print(f"[DEBUG] Error buscando tipo_documento: {e}")
                 pass
+
         if not tipo_cliente_id:
             tipo_cliente_id = data.get('tipo_cliente_id') or None
+            print(f"[DEBUG] tipo_cliente_id final: {tipo_cliente_id}")
 
         # 3. Crear registro en tabla cliente
         nuevo_cliente = {
@@ -129,9 +140,12 @@ def add_cliente():
             'registro_completo': False,
             'auth_id': auth_id
         }
+        print(f"[DEBUG] Insertando cliente: {nuevo_cliente}")
         response = supabase.table('cliente').insert(nuevo_cliente).execute()
+
         if response.data:
             cliente = response.data[0]
+            print(f"[DEBUG] Cliente creado exitosamente: {cliente.get('id_cliente')}")
             return jsonify({
                 'success': True,
                 'message': 'Cuenta creada. Verifica tu correo para continuar.',
@@ -140,14 +154,16 @@ def add_cliente():
         else:
             err = response.error or {}
             msg = str(err.get('message') if isinstance(err, dict) else err)
-            print(f"[CLIENTES] Error al registrar: {msg}")
+            print(f"[ERROR DB] Error al registrar: {msg}")
             return jsonify({'success': False, 'message': 'Error al registrar. Intenta con otros datos.'}), 400
 
     except Exception as e:
-        print(f"Exception en add_cliente: {e}")
+        import traceback
+        print(f"[EXCEPTION COMPLETA] {e}")
+        traceback.print_exc()
         if "already registered" in str(e).lower() or "user already exists" in str(e).lower():
             return jsonify({'success': False, 'message': 'Este correo ya está registrado en el sistema de autenticación.'}), 409
-        return jsonify({'success': False, 'message': 'No se pudo registrar el cliente.'}), 500
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 @clientes_bp.route('/api/clientes/login', methods=['POST'])
 def login_cliente():
