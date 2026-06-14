@@ -97,6 +97,13 @@ def crear_cliente():
         auth_id = auth_user.user.id
         print(f"[DEBUG] Usuario de auth creado: {auth_id}")
 
+        # Forzar envío de email de confirmación
+        try:
+            supabase.auth.admin.send_user_invitation_email(auth_id)
+            print(f"[EMAIL] Email de confirmación enviado a {correo}")
+        except Exception as e:
+            print(f"[EMAIL ERROR] Error enviando email: {e}")
+
         # 2. Resolver tipo_cliente_id desde la descripción (DNI / RUC)
         tipo_documento_desc = (data.get('tipo_documento') or '').strip().upper()
         tipo_cliente_id = None

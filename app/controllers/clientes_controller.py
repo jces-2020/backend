@@ -108,6 +108,13 @@ def add_cliente():
             })
             auth_id = auth_user.user.id
             print(f"[DEBUG] Usuario de auth creado: {auth_id}")
+
+            # Forzar envío de email de confirmación
+            try:
+                supabase.auth.admin.send_user_invitation_email(auth_id)
+                print(f"[EMAIL] Email de confirmación enviado a {correo}")
+            except Exception as e:
+                print(f"[EMAIL ERROR] Error enviando email: {e}")
         except Exception as auth_error:
             print(f"[ERROR AUTH] {auth_error}")
             raise auth_error
