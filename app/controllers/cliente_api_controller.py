@@ -281,7 +281,7 @@ def crear_cliente():
 
         # Forzar envío de email de confirmación
         try:
-            supabase.auth.admin.send_user_invitation_email(auth_id)
+            supabase.auth.admin.send_user_confirmation_email(auth_id)
             print(f"[EMAIL] Email de confirmación enviado a {correo}")
         except Exception as e:
             print(f"[EMAIL ERROR] Error enviando email: {e}")
@@ -477,4 +477,3 @@ def obtener_estadisticas():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-
