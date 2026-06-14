@@ -115,7 +115,7 @@ def validar_email():
         # Intentar enviar email de confirmación
         try:
             print(f"[VALIDAR EMAIL] Intentando enviar email a: {correo}")
-            supabase.auth.admin.send_user_invitation_email(auth_id)
+            supabase.auth.admin.send_user_confirmation_email(auth_id)
             print(f"[VALIDAR EMAIL] Email enviado exitosamente a {correo}")
             # Si éxito, devolver el auth_id para que el frontend lo use en el registro
             return jsonify({
