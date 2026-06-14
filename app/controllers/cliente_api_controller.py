@@ -14,6 +14,7 @@ NO hace:
 - Lógica de negocio (usa servicio)
 """
 from flask import Blueprint, request, jsonify
+import re
 from app.services.supabase_client import supabase
 from app.controllers.clientes_controller import _build_jwt_for_cliente
 from app.core.exceptions import (
@@ -22,6 +23,8 @@ from app.core.exceptions import (
     InvalidDataException,
     DuplicateEntityException
 )
+
+EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 # ==================== SETUP ====================
 
@@ -50,6 +53,174 @@ def _success_response(data: any, message: str = None, status_code: int = 200):
         'message': message,
         'data': data
     }), status_code
+
+# ==================== VALIDACIÓN DE EMAIL ====================
+
+
+@cliente_api_bp.route('/validar-email', methods=['POST'])
+def validar_email():
+    """
+    POST /api/clientes/validar-email
+    Valida que el email exista y pueda recibir el email de confirmación.
+
+    Body: {"correo": "user@example.com", "contraseña": "pass123"}
+
+    Response (éxito):
+    {
+        "success": true,
+        "email_valido": true,
+        "auth_id": "uuid..."
+    }
+
+    Response (error):
+    {
+        "success": false,
+        "email_valido": false,
+        "message": "Gmail inválido"
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        correo = (data.get('correo') or '').strip().lower()
+        contraseña = (data.get('contraseña') or '').strip()
+
+        if not correo or not contraseña:
+            return jsonify({'success': False, 'email_valido': False, 'message': 'Correo y contraseña requeridos.'}), 400
+
+        if not EMAIL_PATTERN.match(correo):
+            return jsonify({'success': False, 'email_valido': False, 'message': 'Correo electrónico inválido.'}), 400
+
+        # Verificar que no esté duplicado
+        existe = supabase.table('cliente').select('id_cliente').eq('correo', correo).limit(1).execute()
+        if existe.data:
+            return jsonify({'success': False, 'email_valido': False, 'message': 'El correo ya está registrado.'}), 409
+
+        # Crear usuario temporal en Supabase Auth
+        print(f"[DEBUG VALIDAR] Creando usuario temporal para validar: {correo}")
+        auth_user = supabase.auth.admin.create_user({
+            "email": correo,
+            "password": contraseña,
+            "email_confirm": False
+        })
+        auth_id = auth_user.user.id
+        print(f"[DEBUG VALIDAR] Usuario temporal creado: {auth_id}")
+
+        # Intentar enviar email de confirmación
+        try:
+            supabase.auth.admin.send_user_invitation_email(auth_id)
+            print(f"[EMAIL VALIDAR] Email de confirmación enviado a {correo}")
+            # Si éxito, devolver el auth_id para que el frontend lo use en el registro
+            return jsonify({
+                'success': True,
+                'email_valido': True,
+                'auth_id': auth_id,
+                'message': 'Email válido. Procede a completar tu registro.'
+            }), 200
+        except Exception as e:
+            print(f"[EMAIL ERROR VALIDAR] Error enviando email: {e}")
+            # Si falla, eliminar el usuario temporal
+            try:
+                supabase.auth.admin.delete_user(auth_id)
+                print(f"[DEBUG VALIDAR] Usuario temporal eliminado: {auth_id}")
+            except Exception as delete_error:
+                print(f"[ERROR] No se pudo eliminar usuario temporal: {delete_error}")
+            return jsonify({'success': False, 'email_valido': False, 'message': 'Gmail inválido. Verifica que sea correcto.'}), 400
+
+    except Exception as e:
+        print(f"[EXCEPTION VALIDAR EMAIL] {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'email_valido': False, 'message': f'Error al validar email: {str(e)}'}), 500
+
+# ==================== REGISTRO COMPLETO ====================
+
+
+@cliente_api_bp.route('/registrar', methods=['POST'])
+def registrar_cliente():
+    """
+    POST /api/clientes/registrar
+    Completa el registro después de validar el email.
+
+    Body:
+    {
+        "auth_id": "uuid...",
+        "correo": "user@example.com",
+        "nombre": "Juan Pérez",
+        "documento": "12345678",
+        "numero": "987654321",
+        "tipo_documento": "DNI" o "RUC",
+        "tipo_cliente_id": "uuid..." (opcional),
+        "estado_cliente_id": "uuid..." (opcional)
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        auth_id = (data.get('auth_id') or '').strip()
+        correo = (data.get('correo') or '').strip().lower()
+        nombre = (data.get('nombre') or '').strip()
+        numero = (data.get('numero') or '').strip()
+        documento = (data.get('documento') or '').strip()
+
+        if not auth_id or not correo or not nombre or not numero:
+            return jsonify({'success': False, 'message': 'Faltan datos obligatorios.'}), 400
+
+        # Verificar que el auth_id exista en Supabase Auth
+        try:
+            auth_user = supabase.auth.admin.get_user(auth_id)
+            print(f"[DEBUG REGISTRAR] Usuario auth verificado: {auth_id}")
+        except Exception as e:
+            print(f"[ERROR REGISTRAR] auth_id inválido: {e}")
+            return jsonify({'success': False, 'message': 'Sesión inválida. Intenta de nuevo.'}), 400
+
+        # Resolver tipo_cliente_id desde la descripción (DNI / RUC)
+        tipo_documento_desc = (data.get('tipo_documento') or '').strip().upper()
+        tipo_cliente_id = None
+        if tipo_documento_desc:
+            try:
+                td = supabase.table('tipo_documento').select('id_tipo').ilike('descripcion', tipo_documento_desc).limit(1).execute()
+                if td.data:
+                    tipo_cliente_id = td.data[0]['id_tipo']
+                    print(f"[DEBUG REGISTRAR] tipo_cliente_id encontrado: {tipo_cliente_id}")
+            except Exception as e:
+                print(f"[DEBUG REGISTRAR] Error buscando tipo_documento: {e}")
+                pass
+
+        if not tipo_cliente_id:
+            tipo_cliente_id = data.get('tipo_cliente_id') or None
+
+        # Crear registro en tabla cliente
+        nuevo_cliente = {
+            'numero': numero,
+            'correo': correo,
+            'nombre': nombre,
+            'documento': documento,
+            'tipo_cliente_id': tipo_cliente_id,
+            'registro_completo': False,
+            'auth_id': auth_id
+        }
+
+        print(f"[DEBUG REGISTRAR] Insertando cliente: {nuevo_cliente}")
+        response = supabase.table('cliente').insert(nuevo_cliente).execute()
+
+        if response.data:
+            cliente = response.data[0]
+            print(f"[DEBUG REGISTRAR] Cliente creado: {cliente.get('id_cliente')}")
+            return jsonify({
+                'success': True,
+                'message': 'Cuenta creada. Verifica tu correo para continuar.',
+                'cliente': cliente
+            }), 201
+        else:
+            err = response.error or {}
+            msg = str(err.get('message') if isinstance(err, dict) else err)
+            print(f"[ERROR DB REGISTRAR] {msg}")
+            return jsonify({'success': False, 'message': 'Error al registrar.'}), 400
+
+    except Exception as e:
+        print(f"[EXCEPTION REGISTRAR] {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 # ==================== CRUD ENDPOINTS ====================
 
@@ -82,6 +253,9 @@ def crear_cliente():
         if not correo or not contraseña or not nombre or not numero:
             return jsonify({'success': False, 'message': 'Faltan datos obligatorios.'}), 400
 
+        if not EMAIL_PATTERN.match(correo):
+            return jsonify({'success': False, 'message': 'Correo electrónico inválido.'}), 400
+
         # Verificar duplicado
         existe = supabase.table('cliente').select('id_cliente').eq('correo', correo).limit(1).execute()
         if existe.data:
@@ -103,6 +277,13 @@ def crear_cliente():
             print(f"[EMAIL] Email de confirmación enviado a {correo}")
         except Exception as e:
             print(f"[EMAIL ERROR] Error enviando email: {e}")
+            # Si falla el envío, eliminar el usuario de auth creado
+            try:
+                supabase.auth.admin.delete_user(auth_id)
+                print(f"[DEBUG] Usuario de auth eliminado por error de email: {auth_id}")
+            except Exception as delete_error:
+                print(f"[ERROR] No se pudo eliminar usuario de auth: {delete_error}")
+            return jsonify({'success': False, 'message': 'Correo inválido. Verifica la dirección e intenta con otro.'}), 400
 
         # 2. Resolver tipo_cliente_id desde la descripción (DNI / RUC)
         tipo_documento_desc = (data.get('tipo_documento') or '').strip().upper()
