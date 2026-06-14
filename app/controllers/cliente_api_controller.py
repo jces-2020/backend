@@ -14,16 +14,8 @@ NO hace:
 - Lógica de negocio (usa servicio)
 """
 from flask import Blueprint, request, jsonify
-from app.services.cliente_service import ClienteService
-from app.repositories.cliente_repository import ClienteRepository
 from app.services.supabase_client import supabase
 from app.controllers.clientes_controller import _build_jwt_for_cliente
-from app.services.email_verification_service import (
-    create_verification,
-    consume_verification,
-    get_verification,
-    send_verification_email,
-)
 from app.core.exceptions import (
     AppException,
     EntityNotFoundException,
@@ -38,10 +30,6 @@ cliente_api_bp = Blueprint(
     __name__,
     url_prefix='/api/clientes'
 )
-
-# Inyección de dependencias
-_repository = ClienteRepository(supabase)
-_service = ClienteService(_repository)
 
 # ==================== HELPERS ====================
 
@@ -69,7 +57,7 @@ def _success_response(data: any, message: str = None, status_code: int = 200):
 @cliente_api_bp.route('', methods=['POST'])
 def crear_cliente():
     """
-    POST /api/clientes
+    POST /api/clientes - Usa Supabase Auth para verificación de correo
     Crea un nuevo cliente.
 
     Body:
@@ -79,61 +67,83 @@ def crear_cliente():
         "documento": "12345678",
         "numero": "987654321",
         "contraseña": "pass123",
+        "tipo_documento": "DNI" o "RUC",
         "tipo_cliente_id": "uuid...",
         "estado_cliente_id": "uuid..."
     }
     """
     try:
         data = request.get_json() or {}
-        cliente = _service.crear_cliente(data)
-        verification = create_verification(cliente.id_cliente, cliente.correo, cliente.nombre)
-        entry = get_verification(verification["verification_token"])
-        if entry:
-            send_verification_email(entry.correo, entry.nombre, entry.codigo, int(verification["ttl_minutes"]))
+        correo = (data.get('correo') or '').strip().lower()
+        contraseña = (data.get('contraseña') or '').strip()
+        nombre = (data.get('nombre') or '').strip()
+        numero = (data.get('numero') or '').strip()
 
-        return _success_response({
-            **cliente.to_dict(),
-            "verification_token": verification["verification_token"],
-            "correo_verificacion_enviado": True,
-            "registro_completo": False,
-        }, "Cliente creado. Revisa tu correo para verificar tu cuenta.", 201)
+        if not correo or not contraseña or not nombre or not numero:
+            return jsonify({'success': False, 'message': 'Faltan datos obligatorios.'}), 400
 
-    except InvalidDataException as e:
-        return _error_response(e)
-    except DuplicateEntityException as e:
-        return _error_response(e)
+        # Verificar duplicado
+        existe = supabase.table('cliente').select('id_cliente').eq('correo', correo).limit(1).execute()
+        if existe.data:
+            return jsonify({'success': False, 'message': 'El correo ya está registrado.'}), 409
+
+        # 1. Crear usuario en Supabase Auth
+        print(f"[DEBUG] Creando usuario de auth para: {correo}")
+        auth_user = supabase.auth.admin.create_user({
+            "email": correo,
+            "password": contraseña,
+            "email_confirm": False
+        })
+        auth_id = auth_user.user.id
+        print(f"[DEBUG] Usuario de auth creado: {auth_id}")
+
+        # 2. Resolver tipo_cliente_id desde la descripción (DNI / RUC)
+        tipo_documento_desc = (data.get('tipo_documento') or '').strip().upper()
+        tipo_cliente_id = None
+        if tipo_documento_desc:
+            try:
+                td = supabase.table('tipo_documento').select('id_tipo').ilike('descripcion', tipo_documento_desc).limit(1).execute()
+                if td.data:
+                    tipo_cliente_id = td.data[0]['id_tipo']
+            except Exception:
+                pass
+
+        if not tipo_cliente_id:
+            tipo_cliente_id = data.get('tipo_cliente_id') or None
+
+        # 3. Crear registro en tabla cliente
+        nuevo_cliente = {
+            'numero': numero,
+            'correo': correo,
+            'contraseña': contraseña,
+            'nombre': nombre,
+            'documento': data.get('documento'),
+            'tipo_cliente_id': tipo_cliente_id,
+            'registro_completo': False,
+            'auth_id': auth_id
+        }
+
+        response = supabase.table('cliente').insert(nuevo_cliente).execute()
+        if response.data:
+            cliente = response.data[0]
+            return jsonify({
+                'success': True,
+                'message': 'Cuenta creada. Verifica tu correo para continuar.',
+                'cliente': cliente
+            }), 201
+        else:
+            err = response.error or {}
+            msg = str(err.get('message') if isinstance(err, dict) else err)
+            print(f"[ERROR DB] {msg}")
+            return jsonify({'success': False, 'message': 'Error al registrar.'}), 400
+
     except Exception as e:
-        print(f"Error en crear_cliente: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)}), 500
-
-
-@cliente_api_bp.route('/verificar-correo', methods=['POST'])
-def verificar_correo():
-    data = request.get_json() or {}
-    token = (data.get('verification_token') or '').strip()
-    codigo = (data.get('codigo') or '').strip()
-
-    if not token or not codigo:
-        return jsonify({'success': False, 'message': 'Token y código son requeridos'}), 400
-
-    entry = consume_verification(token, codigo)
-    if not entry:
-        return jsonify({'success': False, 'message': 'Código incorrecto o expirado'}), 400
-
-    try:
-        updated = supabase.table('cliente').update({'registro_completo': True}).eq('id_cliente', entry.cliente_id).execute()
-        cliente = updated.data[0] if updated.data else None
-        if not cliente:
-            return jsonify({'success': False, 'message': 'No se pudo actualizar el cliente'}), 500
-
-        return _success_response({
-            'cliente': cliente,
-            'token': _build_jwt_for_cliente(cliente),
-            'token_type': 'Bearer'
-        }, 'Correo verificado correctamente', 200)
-    except Exception as e:
-        print(f"Error verificando correo: {str(e)}")
-        return jsonify({'success': False, 'message': 'No se pudo verificar el correo'}), 500
+        import traceback
+        print(f"[EXCEPTION] {e}")
+        traceback.print_exc()
+        if "already registered" in str(e).lower() or "user already exists" in str(e).lower():
+            return jsonify({'success': False, 'message': 'Este correo ya está registrado en el sistema de autenticación.'}), 409
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 
 @cliente_api_bp.route('', methods=['GET'])
