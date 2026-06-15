@@ -73,25 +73,9 @@ def validar_email_api():
     """
     POST /api/clientes/validar-email
     Valida que el email exista y pueda recibir el email de confirmación.
-
-    Body: {"correo": "user@example.com", "contraseña": "pass123"}
-
-    Response (éxito):
-    {
-        "success": true,
-        "email_valido": true,
-        "auth_id": "uuid..."
-    }
-
-    Response (error):
-    {
-        "success": false,
-        "email_valido": false,
-        "message": "Gmail inválido"
-    }
     """
+    print("[VALIDAR EMAIL] Recibida solicitud")
     try:
-        print("[VALIDAR EMAIL] Recibida solicitud")
         data = request.get_json() or {}
         print(f"[VALIDAR EMAIL] Data recibida: {data}")
         correo = (data.get('correo') or '').strip().lower()
@@ -128,7 +112,6 @@ def validar_email_api():
             print(f"[VALIDAR EMAIL] Intentando enviar email a: {correo}")
             supabase.auth.admin.send_user_confirmation_email(auth_id)
             print(f"[VALIDAR EMAIL] Email enviado exitosamente a {correo}")
-            # Si éxito, devolver el auth_id para que el frontend lo use en el registro
             return jsonify({
                 'success': True,
                 'email_valido': True,
@@ -137,7 +120,6 @@ def validar_email_api():
             }), 200
         except Exception as e:
             print(f"[VALIDAR EMAIL] Error enviando email: {e}")
-            # Si falla, eliminar el usuario temporal
             try:
                 supabase.auth.admin.delete_user(auth_id)
                 print(f"[VALIDAR EMAIL] Usuario temporal eliminado: {auth_id}")
