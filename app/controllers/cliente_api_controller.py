@@ -110,8 +110,7 @@ def validar_email_api():
         # Intentar enviar email de confirmación
         try:
             print(f"[VALIDAR EMAIL] Intentando enviar email a: {correo}")
-            print(f"[VALIDAR EMAIL] Métodos disponibles: {dir(supabase.auth.admin)}")
-            supabase.auth.admin.send_user_confirmation_email(auth_id)
+            supabase.auth.admin.invite_user_by_email(email=correo)
             print(f"[VALIDAR EMAIL] Email enviado exitosamente a {correo}")
             return jsonify({
                 'success': True,
@@ -275,7 +274,7 @@ def crear_cliente():
 
         # Forzar envío de email de confirmación
         try:
-            supabase.auth.admin.send_user_confirmation_email(auth_id)
+            supabase.auth.admin.invite_user_by_email(correo)
             print(f"[EMAIL] Email de confirmación enviado a {correo}")
         except Exception as e:
             print(f"[EMAIL ERROR] Error enviando email: {e}")

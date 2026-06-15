@@ -116,7 +116,7 @@ def add_cliente():
 
             # Forzar envío de email de confirmación
             try:
-                supabase.auth.admin.send_user_confirmation_email(auth_id)
+                supabase.auth.admin.invite_user_by_email(email=correo)
                 print(f"[EMAIL] Email de confirmación enviado a {correo}")
             except Exception as e:
                 print(f"[EMAIL ERROR] Error enviando email: {e}")
