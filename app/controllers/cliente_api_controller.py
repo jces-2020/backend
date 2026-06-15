@@ -134,11 +134,15 @@ def registrar_cliente_api():
             })
             auth_id = auth_user.user.id
             print(f"[REGISTRAR] Usuario auth creado: {auth_id}")
+
+            # Enviar email de confirmación
+            supabase.auth.admin.invite_user_by_email(email=correo)
+            print(f"[REGISTRAR] Email enviado a {correo}")
         except Exception as auth_error:
             print(f"[ERROR AUTH] {auth_error}")
             if "already registered" in str(auth_error).lower() or "user already exists" in str(auth_error).lower():
                 return jsonify({'success': False, 'message': 'Este correo ya está registrado.'}), 409
-            return jsonify({'success': False, 'message': f'Error creando usuario: {str(auth_error)}'}), 500
+            return jsonify({'success': False, 'message': f'Error: {str(auth_error)}'}), 500
 
         # Resolver tipo_cliente_id desde la descripción (DNI / RUC)
         tipo_cliente_id_final = None
@@ -233,12 +237,17 @@ def crear_cliente():
                 "password": contraseña,
                 "email_confirm": False
             })
+            auth_id = auth_user.user.id
+            print(f"[DEBUG] Usuario de auth creado: {auth_id}")
+
+            # Enviar email de confirmación
+            supabase.auth.admin.invite_user_by_email(email=correo)
+            print(f"[EMAIL] Email de confirmación enviado a {correo}")
         except Exception as e:
+            print(f"[ERROR] {e}")
             if "already registered" in str(e).lower() or "user already exists" in str(e).lower():
                 return jsonify({'success': False, 'message': 'Este correo ya está registrado en el sistema de autenticación.'}), 409
             raise e
-        auth_id = auth_user.user.id
-        print(f"[DEBUG] Usuario de auth creado: {auth_id}")
 
         # 2. Resolver tipo_cliente_id desde la descripción (DNI / RUC)
         tipo_documento_desc = (data.get('tipo_documento') or '').strip().upper()
@@ -424,4 +433,3 @@ def obtener_estadisticas():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-
