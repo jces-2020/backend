@@ -113,20 +113,6 @@ def add_cliente():
             })
             auth_id = auth_user.user.id
             print(f"[DEBUG] Usuario de auth creado: {auth_id}")
-
-            # Forzar envío de email de confirmación
-            try:
-                supabase.auth.admin.invite_user_by_email(email=correo)
-                print(f"[EMAIL] Email de confirmación enviado a {correo}")
-            except Exception as e:
-                print(f"[EMAIL ERROR] Error enviando email: {e}")
-                # Si falla el envío, eliminar el usuario de auth creado
-                try:
-                    supabase.auth.admin.delete_user(auth_id)
-                    print(f"[DEBUG] Usuario de auth eliminado por error de email: {auth_id}")
-                except Exception as delete_error:
-                    print(f"[ERROR] No se pudo eliminar usuario de auth: {delete_error}")
-                raise Exception('Correo inválido. Verifica la dirección e intenta con otro.')
         except Exception as auth_error:
             print(f"[ERROR AUTH] {auth_error}")
             raise auth_error
@@ -248,6 +234,108 @@ def get_cliente_actual():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@clientes_bp.route('/api/clientes/validar-email', methods=['POST'])
+def validar_email():
+    """Valida que el email sea válido y no esté registrado."""
+    data = request.json
+    correo = (data.get('correo') or '').strip().lower()
+
+    if not correo:
+        return jsonify({'success': False, 'email_valido': False, 'message': 'Correo requerido'}), 400
+
+    if not EMAIL_PATTERN.match(correo):
+        return jsonify({'success': False, 'email_valido': False, 'message': 'Correo electrónico inválido.'}), 400
+
+    existe = supabase.table('cliente').select('id_cliente').eq('correo', correo).limit(1).execute()
+    if existe.data:
+        return jsonify({'success': False, 'email_valido': False, 'message': 'Este correo ya está registrado.'}), 409
+
+    return jsonify({'success': True, 'email_valido': True, 'message': 'Correo válido'}), 200
+
+@clientes_bp.route('/api/clientes/registrar', methods=['POST'])
+def registrar_cliente():
+    """Registra el cliente después de validación de email."""
+    data = request.json
+    correo = (data.get('correo') or '').strip().lower()
+    contraseña = (data.get('contraseña') or '').strip()
+    nombre = (data.get('nombre') or '').strip()
+    numero = (data.get('numero') or '').strip()
+    documento = (data.get('documento') or '').strip()
+    tipo_documento = (data.get('tipo_documento') or '').strip().upper()
+    tipo_cliente_id = data.get('tipo_cliente_id')
+
+    if not correo or not contraseña or not nombre or not numero or not documento:
+        return jsonify({'success': False, 'message': 'Faltan datos obligatorios.'}), 400
+
+    if not EMAIL_PATTERN.match(correo):
+        return jsonify({'success': False, 'message': 'Correo electrónico inválido.'}), 400
+
+    existe = supabase.table('cliente').select('id_cliente').eq('correo', correo).limit(1).execute()
+    if existe.data:
+        return jsonify({'success': False, 'message': 'El correo ya está registrado.'}), 409
+
+    try:
+        print(f"[DEBUG] Intentando crear usuario de auth para: {correo}")
+
+        try:
+            auth_user = supabase.auth.admin.create_user({
+                "email": correo,
+                "password": contraseña,
+                "email_confirm": False
+            })
+            auth_id = auth_user.user.id
+            print(f"[DEBUG] Usuario de auth creado: {auth_id}")
+        except Exception as auth_error:
+            print(f"[ERROR AUTH] {auth_error}")
+            raise auth_error
+
+        tipo_cliente_id_final = None
+        if tipo_documento:
+            try:
+                td = supabase.table('tipo_documento').select('id_tipo').ilike('descripcion', tipo_documento).limit(1).execute()
+                if td.data:
+                    tipo_cliente_id_final = td.data[0]['id_tipo']
+            except:
+                pass
+
+        if not tipo_cliente_id_final:
+            tipo_cliente_id_final = tipo_cliente_id
+
+        nuevo_cliente = {
+            'numero': numero,
+            'correo': correo,
+            'contraseña': contraseña,
+            'nombre': nombre,
+            'documento': documento,
+            'tipo_cliente_id': tipo_cliente_id_final,
+            'registro_completo': False,
+            'auth_id': auth_id
+        }
+
+        response = supabase.table('cliente').insert(nuevo_cliente).execute()
+
+        if response.data:
+            cliente = response.data[0]
+            print(f"[DEBUG] Cliente creado exitosamente: {cliente.get('id_cliente')}")
+            return jsonify({
+                'success': True,
+                'message': 'Registro exitoso. Verifica tu Gmail.',
+                'cliente': cliente,
+            }), 201
+        else:
+            err = response.error or {}
+            msg = str(err.get('message') if isinstance(err, dict) else err)
+            print(f"[ERROR DB] Error al registrar: {msg}")
+            return jsonify({'success': False, 'message': 'Error al registrar. Intenta con otros datos.'}), 400
+
+    except Exception as e:
+        import traceback
+        print(f"[EXCEPTION COMPLETA] {e}")
+        traceback.print_exc()
+        if "already registered" in str(e).lower() or "user already exists" in str(e).lower():
+            return jsonify({'success': False, 'message': 'Este correo ya está registrado en el sistema de autenticación.'}), 409
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 @clientes_bp.route('/api/clientes/temp-access/<cliente_id>', methods=['GET'])
 def get_cliente_temp_access(cliente_id):
