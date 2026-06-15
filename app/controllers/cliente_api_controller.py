@@ -61,7 +61,11 @@ def _success_response(data: any, message: str = None, status_code: int = 200):
 def test_endpoint():
     """Endpoint de prueba"""
     print("[TEST] Se ejecutó el endpoint de prueba")
-    return jsonify({'success': True, 'message': 'Test OK'}), 200
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        print(f"[TEST] Data recibida: {data}")
+        return jsonify({'success': True, 'message': 'Test POST OK', 'data': data}), 200
+    return jsonify({'success': True, 'message': 'Test GET OK'}), 200
 
 
 @cliente_api_bp.route('/validar-email', methods=['POST'])
