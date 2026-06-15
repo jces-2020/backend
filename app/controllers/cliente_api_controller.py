@@ -58,7 +58,7 @@ def _success_response(data: any, message: str = None, status_code: int = 200):
 
 
 @cliente_api_bp.route('/validar-email', methods=['POST'])
-def validar_email():
+def validar_email_api():
     """
     POST /api/clientes/validar-email
     Valida que el email exista y pueda recibir el email de confirmación.
@@ -144,7 +144,7 @@ def validar_email():
 
 
 @cliente_api_bp.route('/registrar', methods=['POST'])
-def registrar_cliente():
+def registrar_cliente_api():
     """
     POST /api/clientes/registrar
     Completa el registro después de validar el email.
@@ -477,4 +477,3 @@ def obtener_estadisticas():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-        
