@@ -424,3 +424,4 @@ def obtener_estadisticas():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
