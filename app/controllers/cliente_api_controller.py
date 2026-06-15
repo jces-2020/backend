@@ -110,6 +110,7 @@ def validar_email_api():
         # Intentar enviar email de confirmación
         try:
             print(f"[VALIDAR EMAIL] Intentando enviar email a: {correo}")
+            print(f"[VALIDAR EMAIL] Métodos disponibles: {dir(supabase.auth.admin)}")
             supabase.auth.admin.send_user_confirmation_email(auth_id)
             print(f"[VALIDAR EMAIL] Email enviado exitosamente a {correo}")
             return jsonify({
