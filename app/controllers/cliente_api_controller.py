@@ -173,12 +173,17 @@ def registrar_cliente_api():
 
             verification_token = None
             try:
+                print(f"[REGISTRAR EMAIL] Iniciando creación de verificación para {correo}")
                 verificacion = create_verification(cliente_id, correo, nombre)
                 verification_token = verificacion['verification_token']
-                send_verification_email(correo, nombre, verificacion['codigo'], int(verificacion['ttl_minutes']))
-                print(f"[REGISTRAR] Email de verificación enviado a {correo}")
+                print(f"[REGISTRAR EMAIL] Verificación creada, código: {verificacion['codigo']}, ttl: {verificacion['ttl_minutes']}")
+
+                email_sent = send_verification_email(correo, nombre, verificacion['codigo'], int(verificacion['ttl_minutes']))
+                print(f"[REGISTRAR EMAIL] Email enviado: {email_sent}")
             except Exception as email_error:
-                print(f"[WARN EMAIL] No se pudo enviar email: {email_error}")
+                print(f"[WARN EMAIL] Error enviando email: {email_error}")
+                import traceback
+                traceback.print_exc()
 
             return jsonify({
                 'success': True,
@@ -237,7 +242,6 @@ def crear_cliente():
         if existe.data:
             return jsonify({'success': False, 'message': 'El correo ya está registrado.'}), 409
 
-        # 1. Crear usuario en Supabase Auth — envía email de confirmación automáticamente
         print(f"[DEBUG] Creando usuario de auth para: {correo}")
         try:
             auth_user = supabase.auth.admin.create_user({
@@ -247,10 +251,6 @@ def crear_cliente():
             })
             auth_id = auth_user.user.id
             print(f"[DEBUG] Usuario de auth creado: {auth_id}")
-
-            # Enviar email de confirmación
-            supabase.auth.admin.invite_user_by_email(email=correo)
-            print(f"[EMAIL] Email de confirmación enviado a {correo}")
         except Exception as e:
             print(f"[ERROR] {e}")
             if "already registered" in str(e).lower() or "user already exists" in str(e).lower():
@@ -286,6 +286,16 @@ def crear_cliente():
         response = supabase.table('cliente').insert(nuevo_cliente).execute()
         if response.data:
             cliente = response.data[0]
+            cliente_id = cliente.get('id_cliente')
+
+            try:
+                print(f"[DEBUG EMAIL] Creando verificación para {correo}")
+                verificacion = create_verification(cliente_id, correo, nombre)
+                email_sent = send_verification_email(correo, nombre, verificacion['codigo'], int(verificacion['ttl_minutes']))
+                print(f"[DEBUG EMAIL] Email enviado: {email_sent}")
+            except Exception as email_error:
+                print(f"[WARN EMAIL] No se envió email: {email_error}")
+
             return jsonify({
                 'success': True,
                 'message': 'Cuenta creada. Verifica tu correo para continuar.',
