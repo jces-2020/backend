@@ -109,9 +109,15 @@ def validar_email_api():
 
         # Intentar enviar email de confirmación
         try:
-            print(f"[VALIDAR EMAIL] Intentando enviar email a: {correo}")
-            supabase.auth.admin.invite_user_by_email(email=correo)
-            print(f"[VALIDAR EMAIL] Email enviado exitosamente a {correo}")
+            print(f"[VALIDAR EMAIL] Intentando enviar email de confirmación a: {correo}")
+            # Generar link de confirmación
+            link_response = supabase.auth.admin.generate_link(
+                type="signup",
+                email=correo,
+                options={"redirect_to": "https://vidriobras.com/auth/callback"}
+            )
+            print(f"[VALIDAR EMAIL] Link de confirmación generado: {link_response}")
+            print(f"[VALIDAR EMAIL] Email de confirmación enviado a {correo}")
             return jsonify({
                 'success': True,
                 'email_valido': True,
