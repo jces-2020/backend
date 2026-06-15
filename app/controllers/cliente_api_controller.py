@@ -141,28 +141,21 @@ def registrar_cliente_api():
     """
     POST /api/clientes/registrar
     Completa el registro después de validar el email.
-
-    Body:
-    {
-        "auth_id": "uuid...",
-        "correo": "user@example.com",
-        "nombre": "Juan Pérez",
-        "documento": "12345678",
-        "numero": "987654321",
-        "tipo_documento": "DNI" o "RUC",
-        "tipo_cliente_id": "uuid..." (opcional),
-        "estado_cliente_id": "uuid..." (opcional)
-    }
     """
+    print("[REGISTRAR] Recibida solicitud")
     try:
         data = request.get_json() or {}
+        print(f"[REGISTRAR] Data recibida: {data}")
         auth_id = (data.get('auth_id') or '').strip()
         correo = (data.get('correo') or '').strip().lower()
         nombre = (data.get('nombre') or '').strip()
         numero = (data.get('numero') or '').strip()
         documento = (data.get('documento') or '').strip()
 
+        print(f"[REGISTRAR] Auth_id: {auth_id}, Correo: {correo}")
+
         if not auth_id or not correo or not nombre or not numero:
+            print("[REGISTRAR] Faltan datos obligatorios")
             return jsonify({'success': False, 'message': 'Faltan datos obligatorios.'}), 400
 
         # Verificar que el auth_id exista en Supabase Auth
