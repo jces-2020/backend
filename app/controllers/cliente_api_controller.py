@@ -25,6 +25,7 @@ from app.core.exceptions import (
 )
 
 EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+EMAIL_REDIRECT_TO = 'https://www.vidriobras.com/user'
 
 # ==================== SETUP ====================
 
@@ -128,7 +129,10 @@ def registrar_cliente_api():
         try:
             auth_user = supabase.auth.sign_up({
                 "email": correo,
-                "password": contraseña
+                "password": contraseña,
+                "options": {
+                    "email_redirect_to": EMAIL_REDIRECT_TO
+                }
             })
             auth_id = auth_user.user.id
             print(f"[REGISTRAR] Usuario auth creado: {auth_id}, email enviado por Supabase")
@@ -230,7 +234,10 @@ def crear_cliente():
         try:
             auth_user = supabase.auth.sign_up({
                 "email": correo,
-                "password": contraseña
+                "password": contraseña,
+                "options": {
+                    "email_redirect_to": EMAIL_REDIRECT_TO
+                }
             })
             auth_id = auth_user.user.id
             print(f"[DEBUG] Usuario de auth creado: {auth_id}, email enviado por Supabase")
