@@ -235,6 +235,65 @@ def get_cliente_actual():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@clientes_bp.route('/api/clientes/confirmar-supabase', methods=['POST'])
+def confirmar_supabase():
+    """Convierte una sesión o código de Supabase en el JWT propio del sistema."""
+    try:
+        data = request.json or {}
+        access_token = (data.get('access_token') or '').strip()
+        auth_code = (data.get('auth_code') or '').strip()
+
+        if auth_code and not access_token:
+            try:
+                exchange = supabase.auth.exchange_code_for_session({"auth_code": auth_code})
+                session = getattr(exchange, 'session', None) or getattr(exchange, 'data', None) or exchange
+                access_token = getattr(session, 'access_token', None) or (session.get('access_token') if isinstance(session, dict) else None) or access_token
+            except Exception as exc:
+                return jsonify({'success': False, 'message': f'No se pudo intercambiar el código de Supabase: {exc}'}), 400
+
+        if not access_token:
+            return jsonify({'success': False, 'message': 'Falta access_token o auth_code.'}), 400
+
+        try:
+            auth_response = supabase.auth.get_user(access_token)
+            supabase_user = getattr(auth_response, 'user', None) or (auth_response.get('user') if isinstance(auth_response, dict) else None)
+        except Exception as exc:
+            return jsonify({'success': False, 'message': f'No se pudo validar la sesión de Supabase: {exc}'}), 401
+
+        if not supabase_user:
+            return jsonify({'success': False, 'message': 'No se pudo obtener el usuario de Supabase.'}), 401
+
+        auth_id = getattr(supabase_user, 'id', None) or (supabase_user.get('id') if isinstance(supabase_user, dict) else None)
+        correo = getattr(supabase_user, 'email', None) or (supabase_user.get('email') if isinstance(supabase_user, dict) else None)
+
+        cliente = None
+        if auth_id:
+            res = supabase.table('cliente').select('id_cliente, correo, nombre, numero, documento, registro_completo, auth_id').eq('auth_id', auth_id).limit(1).execute()
+            if res.data:
+                cliente = res.data[0]
+
+        if not cliente and correo:
+            res = supabase.table('cliente').select('id_cliente, correo, nombre, numero, documento, registro_completo, auth_id').eq('correo', correo).limit(1).execute()
+            if res.data:
+                cliente = res.data[0]
+
+        if not cliente:
+            return jsonify({'success': False, 'message': 'No se encontró un cliente asociado a esta cuenta.'}), 404
+
+        if not cliente.get('registro_completo'):
+            supabase.table('cliente').update({'registro_completo': True}).eq('id_cliente', cliente['id_cliente']).execute()
+            cliente['registro_completo'] = True
+
+        if auth_id and not cliente.get('auth_id'):
+            supabase.table('cliente').update({'auth_id': auth_id}).eq('id_cliente', cliente['id_cliente']).execute()
+            cliente['auth_id'] = auth_id
+
+        token = _build_jwt_for_cliente(cliente)
+        return jsonify({'success': True, 'cliente': cliente, 'token': token, 'token_type': 'Bearer'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @clientes_bp.route('/api/clientes/validar-email', methods=['POST'])
 def validar_email():
     """Valida que el email sea válido y no esté registrado."""
