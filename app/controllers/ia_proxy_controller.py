@@ -42,3 +42,4 @@ def proxy_ia_chat():
         return jsonify(result), 200
     except RuntimeError as exc:
         return jsonify({"success": False, "error": str(exc)}), 503
+
