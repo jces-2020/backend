@@ -4,6 +4,24 @@ from app.services.supabase_client import supabase
 
 EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
+
+def _friendly_signup_error_message(raw_error: Exception) -> tuple[str, int]:
+    msg = str(raw_error or "").strip()
+    low = msg.lower()
+
+    if "already registered" in low or "user already exists" in low:
+        return 'Este correo ya está registrado en el sistema de autenticación.', 409
+
+    if (
+        "error sending confirmation email" in low
+        or "invalid email" in low
+        or "email address" in low and "invalid" in low
+        or "unable to validate email address" in low
+    ):
+        return 'Correo no encontrado o inválido. Usa un Gmail real y vuelve a intentar.', 400
+
+    return f'No se pudo crear la cuenta: {msg or "error desconocido"}', 500
+
 clientes_bp = Blueprint('clientes', __name__)
 
 def _b64url_decode(data: str) -> bytes:
@@ -166,9 +184,8 @@ def add_cliente():
         import traceback
         print(f"[EXCEPTION COMPLETA] {e}")
         traceback.print_exc()
-        if "already registered" in str(e).lower() or "user already exists" in str(e).lower():
-            return jsonify({'success': False, 'message': 'Este correo ya está registrado en el sistema de autenticación.'}), 409
-        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+        user_msg, status = _friendly_signup_error_message(e)
+        return jsonify({'success': False, 'message': user_msg}), status
 
 @clientes_bp.route('/api/clientes/login', methods=['POST'])
 def login_cliente():

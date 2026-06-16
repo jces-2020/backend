@@ -27,6 +27,27 @@ from app.core.exceptions import (
 EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 EMAIL_REDIRECT_TO = 'https://www.vidriobras.com/user'
 
+
+def _friendly_signup_error_message(raw_error: Exception) -> tuple[str, int]:
+    """Normaliza errores de signup para mostrar mensajes claros al usuario."""
+    msg = str(raw_error or "").strip()
+    low = msg.lower()
+
+    if "already registered" in low or "user already exists" in low:
+        return 'Este correo ya está registrado.', 409
+
+    # Supabase suele devolver este texto cuando no puede procesar la dirección
+    # o falla el envío de confirmación al correo indicado.
+    if (
+        "error sending confirmation email" in low
+        or "invalid email" in low
+        or "email address" in low and "invalid" in low
+        or "unable to validate email address" in low
+    ):
+        return 'Correo no encontrado o inválido. Usa un Gmail real y vuelve a intentar.', 400
+
+    return f'No se pudo crear la cuenta: {msg or "error desconocido"}', 500
+
 # ==================== SETUP ====================
 
 cliente_api_bp = Blueprint(
@@ -214,9 +235,8 @@ def registrar_cliente_api():
             print(f"[REGISTRAR] Usuario auth creado: {auth_id}, email enviado por Supabase")
         except Exception as auth_error:
             print(f"[ERROR AUTH] {auth_error}")
-            if "already registered" in str(auth_error).lower() or "user already exists" in str(auth_error).lower():
-                return jsonify({'success': False, 'message': 'Este correo ya está registrado.'}), 409
-            return jsonify({'success': False, 'message': f'Error: {str(auth_error)}'}), 500
+            user_msg, status = _friendly_signup_error_message(auth_error)
+            return jsonify({'success': False, 'message': user_msg}), status
 
         # Resolver tipo_cliente_id desde la descripción (DNI / RUC)
         tipo_cliente_id_final = None
