@@ -10,6 +10,7 @@ import requests
 
 API_IA_BASE_URL = os.getenv("API_IA_URL", "http://127.0.0.1:8001").rstrip("/")
 API_IA_TIMEOUT = float(os.getenv("API_IA_TIMEOUT", "300"))
+API_IA_SESSION_TIMEOUT = float(os.getenv("API_IA_SESSION_TIMEOUT", "25"))
 
 
 def _ia_get(path: str) -> Dict[str, Any]:
@@ -21,21 +22,26 @@ def _ia_get(path: str) -> Dict[str, Any]:
         raise RuntimeError(f"Error contactando api-ia: {exc}") from exc
 
 
-def _ia_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _ia_post(
+    path: str,
+    payload: Dict[str, Any],
+    timeout: Optional[float] = None,
+    retry_attempts: int = 2,
+) -> Dict[str, Any]:
     last_error: Optional[Exception] = None
-    for attempt in range(2):
+    for attempt in range(max(1, retry_attempts)):
         try:
             response = requests.post(
                 f"{API_IA_BASE_URL}{path}",
                 json=payload,
-                timeout=API_IA_TIMEOUT,
+                timeout=timeout or API_IA_TIMEOUT,
             )
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:
             last_error = exc
             # Reintento rapido para mitigar picos transitorios de carga.
-            if attempt == 0:
+            if attempt < max(1, retry_attempts) - 1:
                 time.sleep(0.35)
                 continue
             break
@@ -69,11 +75,21 @@ def ia_chat(
 
 
 def ia_session_start(keep_alive: str = "30m") -> Dict[str, Any]:
-    return _ia_post("/api/ia/session/start", {"keep_alive": keep_alive})
+    return _ia_post(
+        "/api/ia/session/start",
+        {"keep_alive": keep_alive},
+        timeout=API_IA_SESSION_TIMEOUT,
+        retry_attempts=1,
+    )
 
 
 def ia_session_stop() -> Dict[str, Any]:
-    return _ia_post("/api/ia/session/stop", {})
+    return _ia_post(
+        "/api/ia/session/stop",
+        {},
+        timeout=API_IA_SESSION_TIMEOUT,
+        retry_attempts=1,
+    )
 
 
 __all__ = ["ia_health", "ia_chat", "ia_session_start", "ia_session_stop"]
