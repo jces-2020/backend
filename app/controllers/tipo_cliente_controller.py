@@ -5,9 +5,21 @@ import requests
 
 tipo_documento_bp = Blueprint('tipo_documento', __name__)
 
-# Token de ApisPeru CORREGIDO
-# Debe ser exactamente: e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y
-APISPERU_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbnVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+# Token exclusivo para consultas DNI/RUC.
+# No usar el token de facturación; son credenciales distintas.
+APISPERU_DNIRUC_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImkyNDE1OTE0QGNvbnRpbmVudGFsLmVkdS5wZSJ9.e9EuekJUwsqKvAGuELbs-0P65QkqdeMranSkV-Tqb9Y"
+
+APISPERU_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    ),
+}
 
 @tipo_documento_bp.route('/api/tipo_documento', methods=['GET'])
 def get_tipo_documento():
@@ -32,7 +44,7 @@ def test_apisperu():
 @tipo_documento_bp.route('/api/consulta_documento', methods=['POST'])
 def consulta_documento():
     """Consulta la API de ApisPeru desde el backend (Función Centralizada)."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     # Convertimos a mayúsculas para la validación
     tipo = (data.get('tipo') or '').upper() 
     numero = (data.get('numero') or '').strip()
@@ -43,47 +55,54 @@ def consulta_documento():
     if tipo == "DNI":
         if len(numero) != 8 or not numero.isdigit():
             return jsonify({"success": False, "error": "El DNI debe tener 8 dígitos numéricos."}), 400
-        url = f"https://dniruc.apisperu.com/api/v1/dni/{numero}?token={APISPERU_TOKEN}"
+        url = f"https://dniruc.apisperu.com/api/v1/dni/{numero}?token={APISPERU_DNIRUC_TOKEN}"
     elif tipo == "RUC":
         if len(numero) != 11 or not numero.isdigit():
             return jsonify({"success": False, "error": "El RUC debe tener 11 dígitos numéricos."}), 400
-        url = f"https://dniruc.apisperu.com/api/v1/ruc/{numero}?token={APISPERU_TOKEN}"
+        url = f"https://dniruc.apisperu.com/api/v1/ruc/{numero}?token={APISPERU_DNIRUC_TOKEN}"
     else:
         return jsonify({"success": False, "error": "Tipo de documento inválido. Solo se acepta DNI o RUC."}), 400
         
     print(f"URL consultada: {url}")
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=10, headers=APISPERU_HEADERS)
         print(f"Status code ApisPeru: {res.status_code}")
         print(f"Respuesta ApisPeru (raw): {res.text}")
 
-        # La respuesta de ApisPeru puede venir con status 200 pero con un mensaje de error si no encuentra el documento
-        data_json = res.json()
+        raw_text = (res.text or "").strip()
+        if not raw_text:
+            print("[DEBUG] Respuesta vacía desde ApisPeru")
+            return jsonify({"success": False, "error": f"ApisPeru respondió {res.status_code} sin contenido.", "nombre": ""}), 200
+
+        try:
+            data_json = res.json()
+        except ValueError:
+            print(f"[DEBUG] Respuesta no JSON desde ApisPeru: {raw_text[:200]}")
+            return jsonify({"success": False, "error": f"ApisPeru respondió {res.status_code}: {raw_text[:200]}", "nombre": ""}), 200
+
         print(f"Respuesta ApisPeru (json): {data_json}")
 
-        if res.status_code == 200 and 'success' not in data_json and 'error' not in data_json:
+        api_success = bool(data_json.get("success", False))
+        if res.status_code == 200 and api_success:
             nombre = ""
-            # Mostrar el nombre correctamente
             if tipo == "DNI":
                 nombre = f"{data_json.get('nombres','')} {data_json.get('apellidoPaterno','')} {data_json.get('apellidoMaterno','')}".strip()
                 if not nombre:
-                     # Caso donde no hay nombre pero el status es 200
                     return jsonify({"success": False, "error": "No se encontró nombre para este DNI.", "nombre": ""}), 200
-                return jsonify({"success": True, "nombre": nombre, "data": data_json}), 200
-            elif tipo == "RUC":
-                nombre = data_json.get('razonSocial','')
+                return jsonify({"success": True, "nombre": nombre, "html": nombre, "data": data_json}), 200
+
+            if tipo == "RUC":
+                nombre = data_json.get('razonSocial', '').strip()
                 if not nombre:
-                    # Caso donde no hay razón social pero el status es 200
                     return jsonify({"success": False, "error": "No se encontró razón social para este RUC.", "nombre": ""}), 200
-                return jsonify({"success": True, "nombre": nombre, "data": data_json}), 200
-            else:
-                return jsonify({"success": True, "data": data_json}), 200
-        else:
-            # Manejo de errores 4xx/5xx o respuestas 200 con JSON de error
-            error_msg = data_json.get("message") or data_json.get("error") or "No se encontró información para este documento."
-            print(f"Error devuelto: {error_msg}")
-            # Siempre responder 200 para que el frontend no rompa la promesa
-            return jsonify({"success": False, "error": error_msg, "nombre": ""}), 200
+                return jsonify({"success": True, "nombre": nombre, "html": nombre, "data": data_json}), 200
+
+            return jsonify({"success": True, "data": data_json}), 200
+
+        # Manejo de respuestas exitosas sin el flag success o con error explícito
+        error_msg = data_json.get("message") or data_json.get("error") or f"ApisPeru respondió {res.status_code}."
+        print(f"Error devuelto: {error_msg}")
+        return jsonify({"success": False, "error": error_msg, "nombre": ""}), 200
 
     except requests.exceptions.Timeout:
         print("Timeout al conectar con ApisPeru")
