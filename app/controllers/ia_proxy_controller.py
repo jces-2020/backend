@@ -5,7 +5,7 @@ from services.ia_proxy_service import ia_chat, ia_health, ia_session_start, ia_s
 ia_proxy_bp = Blueprint("ia_proxy_bp", __name__)
 
 
-@ia_proxy_bp.route("/api/ia/health", methods=["GET"])
+@ia_proxy_bp.route("/health", methods=["GET"])
 def proxy_ia_health():
     try:
         data = ia_health()
@@ -14,7 +14,7 @@ def proxy_ia_health():
         return jsonify({"success": False, "error": str(exc)}), 503
 
 
-@ia_proxy_bp.route("/api/ia/chat", methods=["POST"])
+@ia_proxy_bp.route("/chat", methods=["POST"])
 def proxy_ia_chat():
     payload = request.get_json(silent=True) or {}
 
@@ -45,7 +45,7 @@ def proxy_ia_chat():
         return jsonify({"success": False, "error": str(exc)}), 503
 
 
-@ia_proxy_bp.route("/api/ia/session/start", methods=["POST"])
+@ia_proxy_bp.route("/session/start", methods=["POST"])
 def proxy_ia_session_start():
     payload = request.get_json(silent=True) or {}
     keep_alive = str(payload.get("keep_alive", "30m")).strip() or "30m"
@@ -56,7 +56,7 @@ def proxy_ia_session_start():
         return jsonify({"success": False, "error": str(exc)}), 503
 
 
-@ia_proxy_bp.route("/api/ia/session/stop", methods=["POST"])
+@ia_proxy_bp.route("/session/stop", methods=["POST"])
 def proxy_ia_session_stop():
     try:
         result = ia_session_stop()

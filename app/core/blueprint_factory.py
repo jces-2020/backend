@@ -80,9 +80,14 @@ def auto_register_blueprints(app: Flask, controllers_path: str = None) -> None:
             blueprint_name = f"{module_name.replace('_controller', '')}_bp"
             if hasattr(module, blueprint_name):
                 blueprint = getattr(module, blueprint_name)
-                app.register_blueprint(blueprint)
+                # Registrar con url_prefix si es ia_proxy_bp
+                if blueprint_name == "ia_proxy_bp":
+                    app.register_blueprint(blueprint, url_prefix="/api/ia")
+                    print(f"  [OK] {parent_dir}/{module_name} -> {blueprint_name} (prefix: /api/ia)")
+                else:
+                    app.register_blueprint(blueprint)
+                    print(f"  [OK] {parent_dir}/{module_name} -> {blueprint_name}")
                 registered += 1
-                print(f"  [OK] {parent_dir}/{module_name} -> {blueprint_name}")
             # Fallback 1: buscar 'bp'
             elif hasattr(module, 'bp'):
                 app.register_blueprint(module.bp)
