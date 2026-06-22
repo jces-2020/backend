@@ -15,7 +15,9 @@ API_IA_SESSION_TIMEOUT = float(os.getenv("API_IA_SESSION_TIMEOUT", "25"))
 
 def _ia_get(path: str) -> Dict[str, Any]:
     try:
-        response = requests.get(f"{API_IA_BASE_URL}{path}", timeout=10)
+        # Health check necesita más tiempo mientras Ollama carga el modelo (30s)
+        timeout = 30 if "health" in path else 10
+        response = requests.get(f"{API_IA_BASE_URL}{path}", timeout=timeout)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as exc:
