@@ -14,7 +14,7 @@ from typing import List
 
 def auto_register_blueprints(app: Flask, controllers_path: str = None) -> None:
     """
-    Registra automáticamente todos los blueprints desde las carpetas de controllers.
+    Registra automáticamente todos los blueprints desde la carpeta controllers.
 
     Cómo usar:
         auto_register_blueprints(app)
@@ -30,64 +30,44 @@ def auto_register_blueprints(app: Flask, controllers_path: str = None) -> None:
         ├── cliente_controller.py     # Must export 'cliente_bp'
         ├── producto_controller.py    # Must export 'producto_bp'
         └── servicio_controller.py    # Must export 'servicio_bp'
-
-        flutter/
-        ├── selector_controller.py
-        ├── productos_flutter_controller.py
-        └── notificaciones_flutter_controller.py
     """
 
-    base_path = Path(__file__).parent.parent  # app/
+    # Determinar path de controllers
+    if controllers_path is None:
+        base_path = Path(__file__).parent.parent  # app/
+        controllers_path = base_path / "controllers"
+    else:
+        controllers_path = Path(controllers_path)
 
-    # Carpetas donde buscar controladores
-    controller_dirs = [
-        base_path / "controllers",
-        base_path / "flutter",
-    ]
+    if not controllers_path.exists():
+        print(f"[!] Controllers path no existe: {controllers_path}")
+        return
+
+    # Encontrar todos los archivos .py
+    controller_files = list(controllers_path.glob("*_controller.py"))
+    print(f"\n[*] Auto-registrando {len(controller_files)} blueprints...")
 
     registered = 0
     errors = []
-    all_controller_files = []
 
-    print(f"\n[*] Buscando blueprints en múltiples carpetas...")
-
-    # Buscar en todas las carpetas
-    for ctrl_path in controller_dirs:
-        if not ctrl_path.exists():
-            print(f"[!] Carpeta no existe: {ctrl_path}")
-            continue
-
-        files = list(ctrl_path.glob("*_controller.py"))
-        print(f"  Encontrados {len(files)} en {ctrl_path.name}/")
-        all_controller_files.extend(files)
-
-    print(f"\n[*] Auto-registrando {len(all_controller_files)} blueprints...")
-
-    for file_path in sorted(all_controller_files):
+    for file_path in sorted(controller_files):
         module_name = file_path.stem  # Nombre sin extensión
-        parent_dir = file_path.parent.name
-
         try:
-            # Importar dinámicamente desde la carpeta correcta
-            if parent_dir == "controllers":
-                module = importlib.import_module(f"controllers.{module_name}")
-            elif parent_dir == "flutter":
-                module = importlib.import_module(f"app.flutter.{module_name}")
-            else:
-                module = importlib.import_module(f"{parent_dir}.{module_name}")
+            # Importar dinámicamente
+            module = importlib.import_module(f"controllers.{module_name}")
 
             # Buscar blueprint (por convención: nombre_bp)
             blueprint_name = f"{module_name.replace('_controller', '')}_bp"
             if hasattr(module, blueprint_name):
                 blueprint = getattr(module, blueprint_name)
                 app.register_blueprint(blueprint)
-                print(f"  [OK] {parent_dir}/{module_name} -> {blueprint_name}")
                 registered += 1
+                print(f"  [OK] {module_name} -> {blueprint_name}")
             # Fallback 1: buscar 'bp'
             elif hasattr(module, 'bp'):
                 app.register_blueprint(module.bp)
                 registered += 1
-                print(f"  [OK] {parent_dir}/{module_name} -> bp")
+                print(f"  [OK] {module_name} -> bp")
             # Fallback 2: buscar cualquier Blueprint en el módulo
             else:
                 found = [
@@ -97,14 +77,14 @@ def auto_register_blueprints(app: Flask, controllers_path: str = None) -> None:
                 if found:
                     app.register_blueprint(found[0])
                     registered += 1
-                    print(f"  [OK] {parent_dir}/{module_name} -> {found[0].name} (auto-detected)")
+                    print(f"  [OK] {module_name} -> {found[0].name} (auto-detected)")
                 else:
-                    errors.append(f"{parent_dir}/{module_name}: No se encontró blueprint")
+                    errors.append(f"{module_name}: No se encontró blueprint")
 
         except ImportError as e:
-            errors.append(f"{parent_dir}/{module_name}: Error de importación - {str(e)}")
+            errors.append(f"{module_name}: Error de importación - {str(e)}")
         except Exception as e:
-            errors.append(f"{parent_dir}/{module_name}: Error - {str(e)}")
+            errors.append(f"{module_name}: Error - {str(e)}")
 
     print(f"\n[SUCCESS] Registrados: {registered} blueprints")
 
