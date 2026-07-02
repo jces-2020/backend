@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from typing import Optional, Dict, Any, Tuple
 from app.services.supabase_client import supabase
+from app.controllers.tipo_personal_controller import verify_jwt
 from app.services.reportes_productos_service import (
     registrar_creacion_producto,
     registrar_edicion_producto,
@@ -13,8 +14,65 @@ from werkzeug.utils import secure_filename
 import mimetypes
 import tempfile
 import os
+import unicodedata
 
 productos_flutter_bp = Blueprint('productos_flutter', __name__, url_prefix='/api/flutter/productos')
+
+
+def _env_enabled(name: str, default: str = '1') -> bool:
+    return os.getenv(name, default).strip().lower() in ('1', 'true', 'yes', 'si')
+
+
+def _normalize_text(value: str) -> str:
+    if not value:
+        return ''
+    normalized = unicodedata.normalize('NFD', str(value))
+    normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+    return normalized.upper().strip()
+
+
+def _require_mobile_personal_access(allowed_areas=None):
+    """Seguridad para API Flutter de productos.
+
+    Variables de entorno:
+    - FLUTTER_PRODUCTOS_REQUIRE_AUTH=1|0 (default 1)
+    - MOBILE_API_KEY=<valor> para exigir header X-Mobile-Key
+    """
+    if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
+        return None
+
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return jsonify({'success': False, 'message': 'No autorizado: falta token Bearer'}), 401
+
+    token = auth.split(' ', 1)[1]
+    payload = verify_jwt(token)
+    if not payload or payload.get('aud') != 'personal':
+        return jsonify({'success': False, 'message': 'Token inválido o expirado'}), 401
+
+    required_mobile_key = os.getenv('MOBILE_API_KEY', '').strip()
+    if required_mobile_key:
+        provided_mobile_key = request.headers.get('X-Mobile-Key', '').strip()
+        if provided_mobile_key != required_mobile_key:
+            return jsonify({'success': False, 'message': 'Acceso denegado: cliente móvil no válido'}), 403
+
+    if allowed_areas:
+        area = _normalize_text(payload.get('area', ''))
+        allowed = [_normalize_text(a) for a in allowed_areas]
+        if area not in allowed:
+            return jsonify({'success': False, 'message': 'Área no autorizada'}), 403
+
+    return None
+
+
+@productos_flutter_bp.before_request
+def _authorize_flutter_productos():
+    # Lectura móvil: cualquier personal autenticado.
+    # Escritura móvil: sólo ALMACEN/ADMINISTRACION.
+    metodo = request.method.upper()
+    if metodo in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return _require_mobile_personal_access(['ALMACEN', 'ADMINISTRACION'])
+    return _require_mobile_personal_access()
 
 
 def _validar_producto_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
