@@ -38,9 +38,6 @@ def _require_mobile_personal_access(allowed_areas=None):
     - FLUTTER_PRODUCTOS_REQUIRE_AUTH=1|0 (default 1)
     - MOBILE_API_KEY=<valor> para exigir header X-Mobile-Key
     """
-    if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
-        return None
-
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Bearer '):
         return jsonify({'success': False, 'message': 'No autorizado: falta token Bearer'}), 401

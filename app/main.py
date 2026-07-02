@@ -80,9 +80,6 @@ def guard_flutter_productos_routes():
     if not request.path.startswith('/api/flutter/productos'):
         return None
 
-    if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
-        return None
-
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Bearer '):
         return jsonify({'success': False, 'message': 'No autorizado: falta token Bearer'}), 401
