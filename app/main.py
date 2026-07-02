@@ -19,10 +19,12 @@ for _p in [_base, _root]:
 # ===============================
 # IMPORTS ESENCIALES
 # ===============================
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 import logging
 from dotenv import load_dotenv
+import unicodedata
+from app.controllers.tipo_personal_controller import verify_jwt
 
 # ===============================
 # LOAD ENV
@@ -58,6 +60,50 @@ auto_register_blueprints(app)
 
 # Supabase debug
 from services.supabase_client import IS_SERVICE, SUPABASE_URL
+
+
+def _env_enabled(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "si")
+
+
+def _normalize_text(value: str) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFD", str(value))
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    return normalized.upper().strip()
+
+
+@app.before_request
+def guard_flutter_productos_routes():
+    """Protege todas las rutas /api/flutter/productos independientemente del blueprint cargado."""
+    if not request.path.startswith('/api/flutter/productos'):
+        return None
+
+    if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
+        return None
+
+    auth = request.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return jsonify({'success': False, 'message': 'No autorizado: falta token Bearer'}), 401
+
+    token = auth.split(' ', 1)[1]
+    payload = verify_jwt(token)
+    if not payload or payload.get('aud') != 'personal':
+        return jsonify({'success': False, 'message': 'Token inválido o expirado'}), 401
+
+    required_mobile_key = os.getenv('MOBILE_API_KEY', '').strip()
+    if required_mobile_key:
+        provided_mobile_key = request.headers.get('X-Mobile-Key', '').strip()
+        if provided_mobile_key != required_mobile_key:
+            return jsonify({'success': False, 'message': 'Acceso denegado: cliente móvil no válido'}), 403
+
+    if request.method.upper() in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        area = _normalize_text(payload.get('area', ''))
+        if area not in ('ALMACEN', 'ADMINISTRACION'):
+            return jsonify({'success': False, 'message': 'Área no autorizada'}), 403
+
+    return None
 
 
 # ===============================
