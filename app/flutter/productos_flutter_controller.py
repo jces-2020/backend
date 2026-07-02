@@ -1026,3 +1026,4 @@ def obtener_resumen_reportes_productos():
             "success": False,
             "message": f"Error interno: {str(e)}"
         }), 500
+
