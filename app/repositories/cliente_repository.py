@@ -68,6 +68,22 @@ class ClienteRepository(BaseRepository):
             from app.core import RepositoryException
             raise RepositoryException(f"Error buscando por documento: {str(e)}")
 
+    def find_by_nombre_exacto(self, nombre: str) -> Optional[Cliente]:
+        """Busca cliente por nombre exacto (case-insensitive)."""
+        try:
+            response = self.db.table(self.table_name)\
+                .select("*")\
+                .ilike("nombre", nombre.strip())\
+                .limit(1)\
+                .execute()
+
+            if response.data:
+                return self._map_to_model(response.data[0])
+            return None
+        except Exception as e:
+            from app.core import RepositoryException
+            raise RepositoryException(f"Error buscando por nombre: {str(e)}")
+
     def find_by_estado(self, estado_id: str) -> List[Cliente]:
         """Busca clientes por estado"""
         return self.find_by_field("estado_cliente_id", estado_id)
