@@ -64,6 +64,10 @@ def _require_mobile_personal_access(allowed_areas=None):
 
 @productos_flutter_bp.before_request
 def _authorize_flutter_productos():
+    # El preflight CORS (OPTIONS) no debe exigir Bearer.
+    if request.method.upper() == 'OPTIONS':
+        return None
+
     if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
         return None
 
