@@ -46,7 +46,7 @@ def _auth_redirect_base() -> str:
 
 def _comprobante_redirect_url() -> str:
     """Ruta de frontend para confirmar comprobante sin iniciar sesion cliente."""
-    return f"{_auth_redirect_base()}/login?flow=comprobante"
+    return f"{_auth_redirect_base()}/comprobante-exito"
 
 
 def _update_auth_metadata_for_email(to_email: str, metadata: Dict[str, Any]) -> None:
