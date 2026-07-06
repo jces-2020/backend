@@ -56,11 +56,19 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # AUTO-REGISTRAR BLUEPRINTS (Factory Pattern)
 # ===============================
 from app.core import auto_register_blueprints
+from app.flutter.selector_controller import selector_bp
+from app.flutter.productos_flutter_controller import productos_flutter_bp
+from app.flutter.notificaciones_flutter_controller import notificaciones_flutter_bp
 
 print("\n" + "=" * 60)
 print("AUTO-REGISTRANDO BLUEPRINTS...")
 print("=" * 60)
 auto_register_blueprints(app)
+
+# Registrar blueprints de app/flutter (no incluidos en auto_register_blueprints).
+for _bp in (selector_bp, productos_flutter_bp, notificaciones_flutter_bp):
+    if _bp.name not in app.blueprints:
+        app.register_blueprint(_bp)
 
 
 def _detect_git_sha(repo_root: str) -> str:
