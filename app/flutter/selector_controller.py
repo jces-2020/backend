@@ -1,12 +1,38 @@
 from flask import Blueprint, request, jsonify
 from typing import Optional, Tuple, Dict, Any
 from app.services.supabase_client import supabase
+import os
+import json
+import base64
+import hmac
+import hashlib
+import time
 
 selector_bp = Blueprint('selector_bp', __name__, url_prefix='/api/selector')
 
 # IDs fijos para las dos áreas solicitadas
 OPERACIONES_ID = "3f31e127-c7f1-49cf-8c95-efb846882165"
 ALMACEN_ID = "8426fd1a-2633-49d1-bc83-f6400bb58708"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
+
+
+def _generar_jwt_personal(personal_id: Optional[str], nombre: str, area: str) -> str:
+    """Genera un JWT HS256 compatible con verify_jwt de personal."""
+    secret = os.environ.get('JWT_SECRET', 'devsecret-change-me')
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "sub": personal_id or str(nombre),
+        "name": nombre,
+        "area": area,
+        "aud": "personal",
+        "exp": int(time.time()) + 72 * 3600,
+    }
+    signing_input = f"{_b64url(json.dumps(header).encode())}.{_b64url(json.dumps(payload).encode())}"
+    signature = hmac.new(secret.encode('utf-8'), signing_input.encode('utf-8'), hashlib.sha256).digest()
+    return signing_input + "." + _b64url(signature)
 
 
 def _validar_personal_por_area(nombre: str, area_id: str) -> Optional[Dict[str, Any]]:
@@ -114,14 +140,16 @@ def login_area():
         if not nombre or not codigo_empresa:
             return jsonify({"success": False, "message": "Nombre y código de empresa requeridos"}), 400
 
+        token = _generar_jwt_personal(None, nombre, area)
+
         # Generar respuesta exitosa
         response_data = {
             "area_id": area_id,
             "area": area,
             "nombre": nombre,
             "codigo_empresa": codigo_empresa,
-            "token": f"token_{area}_{nombre}_{codigo_empresa}",  # fake token, integrar con JWT si es necesario
-            "access_token": f"token_{area}_{nombre}_{codigo_empresa}",
+            "token": token,
+            "access_token": token,
             "token_type": "Bearer",
             "expires_in": 3600,
         }
@@ -172,6 +200,12 @@ def login_operaciones():
         # Obtener tipo de personal
         tipo_personal = _obtener_tipo_personal(personal.get('tipo_personal_id'))
         
+        token = _generar_jwt_personal(
+            personal.get('id_personal'),
+            personal.get('nombre') or nombre,
+            "OPERACIONES",
+        )
+
         response_data = {
             "area_id": area_id,
             "area": "OPERACIONES",
@@ -179,8 +213,8 @@ def login_operaciones():
             "nombre": personal.get('nombre'),
             "tipo_personal": tipo_personal,
             "codigo_empresa": codigo_empresa,
-            "token": f"token_operaciones_{personal.get('id_personal')}",
-            "access_token": f"token_operaciones_{personal.get('id_personal')}",
+            "token": token,
+            "access_token": token,
             "token_type": "Bearer",
             "expires_in": 3600,
         }
@@ -231,6 +265,12 @@ def login_almacen():
         # Obtener tipo de personal
         tipo_personal = _obtener_tipo_personal(personal.get('tipo_personal_id'))
         
+        token = _generar_jwt_personal(
+            personal.get('id_personal'),
+            personal.get('nombre') or nombre,
+            "ALMACEN",
+        )
+
         response_data = {
             "area_id": area_id,
             "area": "ALMACÉN",
@@ -238,8 +278,8 @@ def login_almacen():
             "nombre": personal.get('nombre'),
             "tipo_personal": tipo_personal,
             "codigo_empresa": codigo_empresa,
-            "token": f"token_almacen_{personal.get('id_personal')}",
-            "access_token": f"token_almacen_{personal.get('id_personal')}",
+            "token": token,
+            "access_token": token,
             "token_type": "Bearer",
             "expires_in": 3600,
         }

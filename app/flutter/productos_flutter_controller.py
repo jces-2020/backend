@@ -64,6 +64,9 @@ def _require_mobile_personal_access(allowed_areas=None):
 
 @productos_flutter_bp.before_request
 def _authorize_flutter_productos():
+    if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
+        return None
+
     # Lectura móvil: cualquier personal autenticado.
     # Escritura móvil: sólo ALMACEN/ADMINISTRACION.
     metodo = request.method.upper()
@@ -1026,4 +1029,3 @@ def obtener_resumen_reportes_productos():
             "success": False,
             "message": f"Error interno: {str(e)}"
         }), 500
-
