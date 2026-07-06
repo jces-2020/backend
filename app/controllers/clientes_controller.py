@@ -4,6 +4,18 @@ from app.services.supabase_client import supabase
 
 clientes_bp = Blueprint('clientes', __name__)
 
+
+def _map_duplicate_error_message(raw_error: str) -> str:
+    """Mapea errores de constraint única a mensajes amigables."""
+    text = (raw_error or '').lower()
+    if 'documento' in text or 'dni' in text:
+        return 'Ya existe un cliente registrado con este DNI/documento.'
+    if 'nombre' in text:
+        return 'Ya existe un cliente registrado con este nombre.'
+    if 'correo' in text or 'email' in text:
+        return 'El correo ya está registrado.'
+    return 'Error al registrar. Intenta con otros datos.'
+
 def _b64url_decode(data: str) -> bytes:
     # Rellenar padding '=' si falta
     rem = len(data) % 4
@@ -83,6 +95,7 @@ def get_clientes():
 # Endpoint para agregar un cliente (POST)
 @clientes_bp.route('/api/clientes', methods=['POST'])
 def add_cliente():
+    print('[CLIENTES][v2] POST /api/clientes (alta cliente)')
     data = request.json
     correo = (data.get('correo') or '').strip().lower()
     contraseña = (data.get('contraseña') or '').strip()
@@ -136,15 +149,19 @@ def add_cliente():
             err = response.error or {}
             msg = str(err.get('message') or err)
             print(f"[CLIENTES] Error al registrar: {msg}")
-            return jsonify({'success': False, 'message': 'Error al registrar. Intenta con otros datos.'}), 400
+            return jsonify({'success': False, 'message': _map_duplicate_error_message(msg)}), 400
     except Exception as e:
-        print("Exception:", e)  # Mostrar excepción en consola
+        raw = str(e)
+        print("[CLIENTES] Exception:", raw)  # Mostrar excepción en consola
+        if 'duplicate key value violates unique constraint' in raw.lower() or '23505' in raw:
+            return jsonify({'success': False, 'message': _map_duplicate_error_message(raw)}), 409
         return jsonify({'success': False, 'message': 'No se pudo registrar el cliente.'}), 500
 
 
 @clientes_bp.route('/api/clientes/registrar', methods=['POST'])
 def registrar_cliente_alias():
     """Alias para mantener compatibilidad con el frontend actual."""
+    print('[CLIENTES][v2] POST /api/clientes/registrar (alias)')
     return add_cliente()
 
 @clientes_bp.route('/api/clientes/login', methods=['POST'])
