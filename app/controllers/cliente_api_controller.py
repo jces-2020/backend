@@ -14,6 +14,8 @@ NO hace:
 - Lógica de negocio (usa servicio)
 """
 from flask import Blueprint, request, jsonify
+import re
+import uuid
 from app.services.cliente_service import ClienteService
 from app.repositories.cliente_repository import ClienteRepository
 from app.services.supabase_client import supabase
@@ -68,7 +70,54 @@ def _resolver_tipo_cliente_id(data: dict) -> str | None:
             .execute()
         if td.data:
             return td.data[0].get('id_tipo')
-    return data.get('tipo_cliente_id') or None
+    raw = (data.get('tipo_cliente_id') or '').strip()
+    if not raw or raw.lower() in ('null', 'none', 'undefined'):
+        return None
+    try:
+        uuid.UUID(raw)
+        return raw
+    except Exception:
+        return None
+
+
+def _email_formato_valido(correo: str) -> bool:
+    return bool(re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', correo or ''))
+
+
+def _auth_sign_up(correo: str, contrasena: str, nombre: str) -> tuple[bool, str]:
+    """Crea usuario en Supabase Auth y dispara correo de confirmación."""
+    try:
+        supabase.auth.sign_up({
+            'email': correo,
+            'password': contrasena,
+            'options': {
+                'data': {
+                    'name': nombre,
+                }
+            }
+        })
+        return True, 'Correo de confirmación enviado.'
+    except Exception as e:
+        msg = str(e)
+        if 'already registered' in msg.lower() or 'user already registered' in msg.lower():
+            return False, 'already_registered'
+        return False, f'No se pudo registrar en autenticación: {msg}'
+
+
+def _auth_email_confirmado(correo: str, contrasena: str) -> bool:
+    """Confirma estado del email intentando login en Supabase Auth."""
+    try:
+        supabase.auth.sign_in_with_password({
+            'email': correo,
+            'password': contrasena,
+        })
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 # ==================== CRUD ENDPOINTS ====================
 
@@ -249,6 +298,8 @@ def validar_email_api():
         correo = (data.get('correo') or '').strip().lower()
         if not correo:
             return jsonify({'email_valido': False, 'message': 'Correo requerido'}), 400
+        if not _email_formato_valido(correo):
+            return jsonify({'email_valido': False, 'message': 'Formato de correo inválido.'}), 200
 
         existente = _repository.find_by_correo(correo)
         if existente:
@@ -267,6 +318,12 @@ def registrar_cliente_api():
         correo = (data.get('correo') or '').strip().lower()
         nombre = (data.get('nombre') or '').strip()
         documento = (data.get('documento') or '').strip()
+        contrasena = (data.get('contraseña') or '').strip()
+
+        if not _email_formato_valido(correo):
+            return jsonify({'success': False, 'message': 'Formato de correo inválido.'}), 400
+        if not contrasena:
+            return jsonify({'success': False, 'message': 'Contraseña requerida.'}), 400
 
         if _repository.find_by_correo(correo):
             return jsonify({'success': False, 'message': 'El correo ya está registrado.'}), 409
@@ -275,21 +332,34 @@ def registrar_cliente_api():
         if nombre and _repository.find_by_nombre_exacto(nombre):
             return jsonify({'success': False, 'message': 'Ya existe un cliente registrado con este nombre.'}), 409
 
+        auth_ok, auth_msg = _auth_sign_up(correo, contrasena, nombre)
+        if not auth_ok and auth_msg != 'already_registered':
+            return jsonify({'success': False, 'message': auth_msg}), 400
+
+        # Flujo requerido: cliente se crea SOLO cuando el correo ya está confirmado.
+        if not _auth_email_confirmado(correo, contrasena):
+            return jsonify({
+                'success': False,
+                'verification_pending': True,
+                'message': 'Te enviamos un correo de confirmación (Confirm sign up). Confírmalo y vuelve a crear la cuenta.'
+            }), 409
+
         payload = {
             'nombre': nombre,
             'correo': correo,
             'documento': documento,
             'numero': (data.get('numero') or '').strip(),
-            'contraseña': (data.get('contraseña') or '').strip(),
+            'contraseña': contrasena,
             'tipo_cliente_id': _resolver_tipo_cliente_id(data),
             'estado_cliente_id': data.get('estado_cliente_id'),
             'cuenta_temporal': data.get('cuenta_temporal', False),
         }
 
         cliente = _service.crear_cliente(payload)
+
         return jsonify({
             'success': True,
-            'message': 'Registro exitoso',
+            'message': 'Registro exitoso. Revisa tu Gmail para confirmar tu cuenta.',
             'cliente': cliente.to_dict(),
         }), 201
 
