@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify, request
 from app.services.supabase_client import supabase
 import os, json, base64, hmac, hashlib, time
+import unicodedata
 
 tipo_personal_bp = Blueprint('tipo_personal', __name__)
 
@@ -15,8 +16,50 @@ def _b64url_decode(data: str) -> bytes:
         data += '=' * (4 - rem)
     return base64.urlsafe_b64decode(data)
 
+
+def _normalize_area(area: str) -> str:
+    normalized = unicodedata.normalize('NFD', str(area or ''))
+    normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+    return normalized.upper().strip()
+
+
+def _verify_legacy_mobile_token(token: str):
+    """Compatibilidad temporal con tokens legacy token_<area>_..."""
+    if not token or not token.startswith('token_'):
+        return None
+
+    area = None
+    lower = token.lower()
+    if lower.startswith('token_almacen_'):
+        area = 'ALMACEN'
+    elif lower.startswith('token_operaciones_'):
+        area = 'OPERACIONES'
+    else:
+        parts = token.split('_', 2)
+        if len(parts) >= 3:
+            area = _normalize_area(parts[1])
+
+    if not area:
+        return None
+
+    return {
+        'sub': token,
+        'name': 'legacy-mobile',
+        'area': area,
+        'aud': 'personal',
+        'legacy': True,
+        'exp': int(time.time()) + 12 * 3600,
+    }
+
 def verify_jwt(token: str):
     try:
+        token = (token or '').strip()
+
+        # Compatibilidad temporal para clientes móviles con token legacy.
+        legacy_payload = _verify_legacy_mobile_token(token)
+        if legacy_payload:
+            return legacy_payload
+
         parts = token.split('.')
         if len(parts) != 3:
             return None
