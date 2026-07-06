@@ -336,3 +336,4 @@ def pagar_bono_y_notificar(personal_id: str, bono_id: str, monto: float, fecha_p
         "pago": resultado_pago,
         "correo": correo_result,
     }
+
