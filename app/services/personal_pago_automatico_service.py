@@ -67,30 +67,13 @@ def _send_invite_template(
         return {"ok": True, "message": "Correo enviado con plantilla Invite user"}
     except Exception as exc:
         print(f"[personal_pago_automatico_service] error invite_user: {exc}")
-
-        # Fallback de entrega para no perder el envio:
-        # usa Magic Link/OTP cuando Invite falla (por ejemplo usuario ya existente).
-        try:
-            supabase.auth.sign_in_with_otp({
-                "email": to_email,
-                "options": {
-                    "email_redirect_to": f"{_auth_redirect_base()}/login",
-                    "data": {
-                        "nombre": nombre,
-                        "monto": round(float(monto), 2),
-                        "fecha": fecha_pago,
-                        "detalle": (detalle or "Pago de bono").strip(),
-                        "tipo_pago": "bono",
-                    },
-                },
-            })
-            return {
-                "ok": True,
-                "message": "Invite fallo, correo enviado por fallback Magic Link/OTP",
-            }
-        except Exception as fallback_exc:
-            print(f"[personal_pago_automatico_service] error fallback magic link: {fallback_exc}")
-            return {"ok": False, "message": f"Error Invite user: {exc} | fallback: {fallback_exc}"}
+        return {
+            "ok": False,
+            "message": (
+                "No se envio correo de bono con plantilla Invite user. "
+                f"Detalle: {exc}"
+            ),
+        }
 
 
 def _send_reauth_template(
