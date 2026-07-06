@@ -230,7 +230,11 @@ def guard_flutter_productos_routes():
 
     # El preflight CORS no incluye Authorization; debe pasar sin auth.
     if request.method.upper() == 'OPTIONS':
-        return None
+        response = app.make_response(("", 204))
+        response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-Mobile-Key'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+        return response
 
     if not _env_enabled('FLUTTER_PRODUCTOS_REQUIRE_AUTH', '1'):
         return None
