@@ -15,8 +15,12 @@ from services.personal_service import (
     create_pago,
     create_gasto_personal_bono,
     create_gasto_personal,
-    create_gasto_personal_todos,
     upload_cv_pdf,
+)
+from services.personal_pago_automatico_service import (
+    enviar_comprobante_pago_email,
+    pagar_mensual_automatico,
+    pagar_bono_y_notificar,
 )
 
 personal_admin_bp = Blueprint("personal_admin_bp", __name__)
@@ -36,9 +40,9 @@ def create_personal_endpoint():
     nombre = (data.get("nombre") or "").strip()
     codigo = (data.get("codigo") or "").strip()
     tipo_personal_id = data.get("tipo_personal_id")
+    correo = (data.get("correo") or "").strip().lower()
     cv = data.get("cv")
     fecha_nacimiento = data.get("fecha_nacimiento")
-    correo = (data.get("email") or data.get("correo") or "").strip()
 
     if not nombre:
         return jsonify({"success": False, "message": "Nombre requerido"}), 400
@@ -49,9 +53,9 @@ def create_personal_endpoint():
         nombre=nombre,
         codigo=codigo,
         tipo_personal_id=tipo_personal_id,
+        correo=correo or None,
         cv=cv,
         fecha_nacimiento=fecha_nacimiento,
-        correo=correo,
     )
     if personal:
         return jsonify({"success": True, "message": "Personal creado", "data": personal}), 201
@@ -187,51 +191,30 @@ def register_pago(personal_id):
     pago = create_pago(personal_id, monto_float, fecha_pago)
 
     if pago and gasto:
+        personal = get_personal_by_id(personal_id) or {}
+        correo_result = {"ok": False, "message": "Sin correo"}
+        correo = (personal.get("correo") or "").strip().lower()
+        if correo:
+            correo_result = enviar_comprobante_pago_email(
+                to_email=correo,
+                nombre=(personal.get("nombre") or "Colaborador"),
+                monto=monto_float,
+                tipo="mensual",
+                fecha_pago=fecha_pago,
+                detalle="Pago mensual",
+            )
+
         return jsonify({
             "success": True,
             "message": "Pago mensual registrado",
             "data": {
                 "pago": pago,
                 "gasto": gasto,
+                "correo": correo_result,
             },
         })
 
     return jsonify({"success": False, "message": "Error al registrar pago"}), 500
-
-
-@personal_admin_bp.route("/api/personal/pago-todos", methods=["POST"])
-def register_pago_todos():
-    """Registra un pago mensual para todo el personal y crea un gasto total."""
-    data = request.get_json()
-    monto = data.get("monto")
-    fecha_pago = data.get("fecha") or str(date.today())
-    caja_id = data.get("caja_id")
-
-    if monto is None:
-        return jsonify({"success": False, "message": "Monto requerido"}), 400
-
-    try:
-        monto_float = float(monto)
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "message": "Monto invalido"}), 400
-
-    if monto_float <= 0:
-        return jsonify({"success": False, "message": "Monto debe ser mayor a 0"}), 400
-
-    gasto = create_gasto_personal_todos(monto_float, fecha_pago, caja_id)
-    pago = create_pago("", monto_float, fecha_pago)
-
-    if pago and gasto:
-        return jsonify({
-            "success": True,
-            "message": "Pago mensual registrado para todo el personal",
-            "data": {
-                "pago": pago,
-                "gasto": gasto,
-            },
-        })
-
-    return jsonify({"success": False, "message": "Error al registrar pago para todo el personal"}), 500
 
 
 @personal_admin_bp.route("/api/personal/<personal_id>/pago-bono", methods=["POST"])
@@ -257,13 +240,75 @@ def register_pago_bono(personal_id):
     pago = create_pago(personal_id, monto_float, fecha_pago)
 
     if pago and gasto:
+        personal = get_personal_by_id(personal_id) or {}
+        correo_result = {"ok": False, "message": "Sin correo"}
+        correo = (personal.get("correo") or "").strip().lower()
+        if correo:
+            correo_result = enviar_comprobante_pago_email(
+                to_email=correo,
+                nombre=(personal.get("nombre") or "Colaborador"),
+                monto=monto_float,
+                tipo="bono",
+                fecha_pago=fecha_pago,
+                detalle="Pago de bono",
+            )
+
         return jsonify({
             "success": True,
             "message": "Bono pagado",
             "data": {
                 "pago": pago,
                 "gasto": gasto,
+                "correo": correo_result,
             },
         })
 
     return jsonify({"success": False, "message": "Error al pagar bono"}), 500
+
+
+@personal_admin_bp.route("/api/personal/pagos/auto-ejecutar", methods=["POST"])
+def ejecutar_pago_automatico():
+    """Ejecuta manualmente el pago mensual automatico (util para pruebas/admin)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        fecha = (data.get("fecha") or "").strip() or None
+        resultado = pagar_mensual_automatico(fecha)
+        return jsonify(resultado), 200
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"Error ejecutando pago automatico: {exc}"}), 500
+
+
+@personal_admin_bp.route("/api/personal/bonos/asignar-pagar-notificar", methods=["POST"])
+def asignar_pagar_notificar_bono():
+    """Asigna bono, registra pago como gasto y envia comprobante por correo."""
+    data = request.get_json() or {}
+    personal_id = (data.get("personal_id") or "").strip()
+    bono_id = (data.get("bono_id") or "").strip()
+    monto = data.get("monto")
+    fecha_pago = (data.get("fecha") or str(date.today())).strip()
+
+    if not personal_id:
+        return jsonify({"success": False, "message": "personal_id requerido"}), 400
+    if not bono_id:
+        return jsonify({"success": False, "message": "bono_id requerido"}), 400
+    if monto is None:
+        return jsonify({"success": False, "message": "Monto requerido"}), 400
+
+    try:
+        monto_float = float(monto)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "Monto invalido"}), 400
+
+    if monto_float <= 0:
+        return jsonify({"success": False, "message": "Monto debe ser mayor a 0"}), 400
+
+    try:
+        resultado = pagar_bono_y_notificar(
+            personal_id=personal_id,
+            bono_id=bono_id,
+            monto=monto_float,
+            fecha_pago=fecha_pago,
+        )
+        return jsonify(resultado), 200
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"Error procesando bono: {exc}"}), 500

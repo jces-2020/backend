@@ -48,9 +48,9 @@ def create_personal(
     nombre: str,
     codigo: str,
     tipo_personal_id: Optional[str] = None,
+    correo: Optional[str] = None,
     cv: Optional[str] = None,
     fecha_nacimiento: Optional[str] = None,
-    correo: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Crea un nuevo personal.
@@ -63,12 +63,12 @@ def create_personal(
 
         if tipo_personal_id:
             insert_data["tipo_personal_id"] = tipo_personal_id
+        if correo:
+            insert_data["correo"] = correo.strip().lower()
         if cv:
             insert_data["cv"] = cv.strip()
         if fecha_nacimiento:
             insert_data["fecha_nacimiento"] = fecha_nacimiento
-        if correo:
-            insert_data["correo"] = correo.strip()
 
         result = supabase.table("personal").insert(insert_data).execute()
         if result.data:
@@ -192,37 +192,11 @@ def create_pago(personal_id: str, monto: float, fecha: str) -> Optional[Dict[str
         return None
 
 
-def create_gasto_personal_todos(
-    monto: float,
-    fecha: str,
-    caja_id: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    Crea un gasto por pago a todo el personal.
-    Registra el tipo fijo como 'personal todos' en la tabla gastos.
-    """
-    try:
-        insert_data: Dict[str, Any] = {
-            "monto": monto,
-            "fecha": fecha,
-            "tipo": "personal todos",
-        }
-        if caja_id:
-            insert_data["caja_id"] = caja_id
-
-        result = supabase.table("gastos").insert(insert_data).execute()
-        if result.data:
-            return result.data[0]
-        return None
-    except Exception as exc:  # noqa: BLE001
-        print(f"[personal_service] error creating gasto personal todos: {exc}")
-        return None
-
-
 def create_gasto_personal_bono(
     monto: float,
     fecha: str,
     caja_id: Optional[str] = None,
+    tipo_gasto: str = "personal bono",
 ) -> Optional[Dict[str, Any]]:
     """
     Crea un gasto por pago de bono al personal.
@@ -232,7 +206,7 @@ def create_gasto_personal_bono(
         insert_data: Dict[str, Any] = {
             "monto": monto,
             "fecha": fecha,
-            "tipo": "personal bono",
+            "tipo": (tipo_gasto or "personal bono").strip(),
         }
         if caja_id:
             insert_data["caja_id"] = caja_id
@@ -250,6 +224,7 @@ def create_gasto_personal(
     monto: float,
     fecha: str,
     caja_id: Optional[str] = None,
+    tipo_gasto: str = "personal",
 ) -> Optional[Dict[str, Any]]:
     """
     Crea un gasto por pago mensual al personal.
@@ -259,7 +234,7 @@ def create_gasto_personal(
         insert_data: Dict[str, Any] = {
             "monto": monto,
             "fecha": fecha,
-            "tipo": "personal",
+            "tipo": (tipo_gasto or "personal").strip(),
         }
         if caja_id:
             insert_data["caja_id"] = caja_id
@@ -339,7 +314,6 @@ __all__ = [
     "add_bono_to_personal",
     "remove_bono_from_personal",
     "create_pago",
-    "create_gasto_personal_todos",
     "create_gasto_personal_bono",
     "create_gasto_personal",
     "upload_cv_pdf",

@@ -12,6 +12,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from services.supabase_client import supabase
+from services.personal_pago_automatico_service import pagar_mensual_automatico
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,21 @@ def limpiar_cuentas_temporales() -> None:
         logger.error(f"[Scheduler 1AM] Error al limpiar cuentas temporales: {e}")
 
 
+def ejecutar_pago_mensual_personal() -> None:
+    """Ejecuta el pago mensual automatico del personal (monto configurable, default S/1300)."""
+    try:
+        resultado = pagar_mensual_automatico()
+        logger.info(
+            "[Scheduler 08AM] Pago mensual personal ejecutado - procesados=%s pagados=%s omitidos=%s errores=%s",
+            resultado.get("procesados"),
+            resultado.get("pagados"),
+            resultado.get("omitidos"),
+            len(resultado.get("errores") or []),
+        )
+    except Exception as exc:
+        logger.error(f"[Scheduler 08AM] Error en pago mensual personal: {exc}")
+
+
 def iniciar_scheduler() -> BackgroundScheduler:
     """
     Crea y arranca el scheduler en segundo plano.
@@ -54,6 +70,17 @@ def iniciar_scheduler() -> BackgroundScheduler:
         replace_existing=True,
     )
 
+    # Cron: todos los dias a las 8:00 AM para evaluar y ejecutar pagos mensuales de personal.
+    scheduler.add_job(
+        func=ejecutar_pago_mensual_personal,
+        trigger=CronTrigger(hour=8, minute=0, timezone="America/Lima"),
+        id="pago_mensual_personal",
+        name="Pago mensual automatico personal 8AM",
+        replace_existing=True,
+    )
+
     scheduler.start()
-    logger.info("[Scheduler] Iniciado — limpieza de cuentas temporales programada a la 1:00 AM (Lima)")
+    logger.info(
+        "[Scheduler] Iniciado - limpieza 1:00 AM y pago mensual personal 8:00 AM (Lima)"
+    )
     return scheduler
