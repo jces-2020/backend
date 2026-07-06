@@ -264,10 +264,21 @@ def registrar_cliente_api():
     """Registro público de cliente (flujo login/registro)."""
     try:
         data = request.get_json() or {}
+        correo = (data.get('correo') or '').strip().lower()
+        nombre = (data.get('nombre') or '').strip()
+        documento = (data.get('documento') or '').strip()
+
+        if _repository.find_by_correo(correo):
+            return jsonify({'success': False, 'message': 'El correo ya está registrado.'}), 409
+        if documento and _repository.find_by_documento(documento):
+            return jsonify({'success': False, 'message': 'Ya existe un cliente registrado con este DNI/documento.'}), 409
+        if nombre and _repository.find_by_nombre_exacto(nombre):
+            return jsonify({'success': False, 'message': 'Ya existe un cliente registrado con este nombre.'}), 409
+
         payload = {
-            'nombre': (data.get('nombre') or '').strip(),
-            'correo': (data.get('correo') or '').strip().lower(),
-            'documento': (data.get('documento') or '').strip(),
+            'nombre': nombre,
+            'correo': correo,
+            'documento': documento,
             'numero': (data.get('numero') or '').strip(),
             'contraseña': (data.get('contraseña') or '').strip(),
             'tipo_cliente_id': _resolver_tipo_cliente_id(data),
