@@ -9,6 +9,7 @@ import sys
 import os
 from datetime import datetime, timezone
 import subprocess
+import hashlib
 
 # Asegurar que tanto 'backend/app' (para from services.X)
 # como 'backend' (para from app.services.X) estén en sys.path
@@ -97,6 +98,32 @@ def _build_info() -> dict:
 RUNTIME_BUILD_INFO = _build_info()
 
 
+def _file_sha256(path: str) -> str:
+    """Calcula sha256 de un archivo para verificar versión efectiva en servidor."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return "unknown"
+
+
+def _collect_cliente_routes(flask_app: Flask) -> list[str]:
+    """Lista rutas de clientes registradas en runtime."""
+    return sorted(
+        {
+            f"{','.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))} {rule.rule}"
+            for rule in flask_app.url_map.iter_rules()
+            if rule.rule.startswith('/api/clientes')
+        }
+    )
+
+
+RUNTIME_BUILD_INFO["cliente_routes"] = _collect_cliente_routes(app)
+RUNTIME_BUILD_INFO["clientes_controller_sha256"] = _file_sha256(
+    os.path.join(os.path.dirname(__file__), "controllers", "clientes_controller.py")
+)
+
+
 def _print_runtime_diagnostics(flask_app: Flask) -> None:
     """Imprime diagnostico basico para detectar despliegues apuntando a rutas equivocadas."""
     print("\n" + "=" * 60)
@@ -106,13 +133,7 @@ def _print_runtime_diagnostics(flask_app: Flask) -> None:
     print(f"[BOOT] cwd={os.getcwd()}")
     print(f"[BOOT] commit={RUNTIME_BUILD_INFO.get('commit')}")
     print(f"[BOOT] started_at={RUNTIME_BUILD_INFO.get('started_at')}")
-    cliente_rules = sorted(
-        {
-            f"{','.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))} {rule.rule}"
-            for rule in flask_app.url_map.iter_rules()
-            if rule.rule.startswith('/api/clientes')
-        }
-    )
+    cliente_rules = _collect_cliente_routes(flask_app)
     print(f"[BOOT] clientes_routes={len(cliente_rules)}")
     for r in cliente_rules:
         print(f"[BOOT] route {r}")
@@ -226,4 +247,3 @@ if __name__ == "__main__":
         port=5000,
         debug=True
     )
-
