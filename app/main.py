@@ -10,6 +10,7 @@ import os
 from datetime import datetime, timezone
 import subprocess
 import hashlib
+import inspect
 
 # Asegurar que tanto 'backend/app' (para from services.X)
 # como 'backend' (para from app.services.X) estén en sys.path
@@ -118,7 +119,40 @@ def _collect_cliente_routes(flask_app: Flask) -> list[str]:
     )
 
 
+def _collect_cliente_route_handlers(flask_app: Flask) -> list[dict]:
+    """Devuelve detalle de handlers para rutas /api/clientes* en runtime."""
+    rows = []
+    for rule in flask_app.url_map.iter_rules():
+        if not rule.rule.startswith('/api/clientes'):
+            continue
+        endpoint = rule.endpoint
+        view = flask_app.view_functions.get(endpoint)
+        source_file = None
+        module_name = None
+        qualname = None
+        if view is not None:
+            module_name = getattr(view, "__module__", None)
+            qualname = getattr(view, "__qualname__", None)
+            try:
+                source_file = inspect.getsourcefile(view) or inspect.getfile(view)
+            except Exception:
+                source_file = None
+
+        rows.append({
+            "rule": rule.rule,
+            "methods": sorted(list(rule.methods - {'HEAD', 'OPTIONS'})),
+            "endpoint": endpoint,
+            "view_module": module_name,
+            "view_func": qualname,
+            "source_file": source_file,
+        })
+
+    rows.sort(key=lambda x: (x["rule"], ",".join(x["methods"])))
+    return rows
+
+
 RUNTIME_BUILD_INFO["cliente_routes"] = _collect_cliente_routes(app)
+RUNTIME_BUILD_INFO["cliente_route_handlers"] = _collect_cliente_route_handlers(app)
 RUNTIME_BUILD_INFO["clientes_controller_sha256"] = _file_sha256(
     os.path.join(os.path.dirname(__file__), "controllers", "clientes_controller.py")
 )
