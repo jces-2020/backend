@@ -67,16 +67,61 @@ def _send_invite_template(
         print(f"[personal_pago_automatico_service] invite_user enviado a {to_email}: {invite_resp}")
         return {"ok": True, "message": "Correo enviado con plantilla Invite user"}
     except Exception as exc:
-        print(f"[personal_pago_automatico_service] error invite_user: {exc}")
-        # Para cuentas existentes, Invite puede fallar; usamos Reauthentication como alternativa válida
-        # (plantilla indicada) en vez de Magic Link.
-        return _send_reauth_template(
-            to_email=to_email,
-            nombre=nombre,
-            monto=monto,
-            fecha_pago=fecha_pago,
-            detalle=(detalle or "Pago de bono"),
-        )
+        err = str(exc)
+        print(f"[personal_pago_automatico_service] error invite_user: {err}")
+
+        # Invite user solo aplica para usuarios no registrados.
+        # Si el correo ya existe en Auth, se envia con la plantilla Magic link or OTP.
+        if "already been registered" in err.lower() or "already registered" in err.lower():
+            fallback = _send_magic_link_template(
+                to_email=to_email,
+                nombre=nombre,
+                monto=monto,
+                fecha_pago=fecha_pago,
+                tipo="bono",
+                detalle=(detalle or "Pago de bono"),
+            )
+            if fallback.get("ok"):
+                return {
+                    "ok": True,
+                    "message": "Usuario ya registrado: correo enviado con plantilla Magic link or OTP",
+                }
+            return fallback
+
+        return {
+            "ok": False,
+            "message": f"No se pudo enviar con Invite user: {err}",
+        }
+
+
+def _send_magic_link_template(
+    to_email: str,
+    nombre: str,
+    monto: float,
+    fecha_pago: str,
+    tipo: str = "mensual",
+    detalle: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Envia correo con plantilla Magic link or OTP de Supabase Auth."""
+    try:
+        resp = supabase.auth.sign_in_with_otp({
+            "email": to_email,
+            "options": {
+                "email_redirect_to": f"{_auth_redirect_base()}/login",
+                "data": {
+                    "nombre": nombre,
+                    "monto": round(float(monto), 2),
+                    "fecha": fecha_pago,
+                    "detalle": (detalle or "Pago").strip(),
+                    "tipo_pago": (tipo or "mensual"),
+                },
+            },
+        })
+        print(f"[personal_pago_automatico_service] magic_link enviado a {to_email}: {resp}")
+        return {"ok": True, "message": "Correo enviado con plantilla Magic link or OTP"}
+    except Exception as exc:
+        print(f"[personal_pago_automatico_service] error magic_link: {exc}")
+        return {"ok": False, "message": f"Error Magic link or OTP: {exc}"}
 
 
 def _send_reauth_template(
@@ -86,47 +131,18 @@ def _send_reauth_template(
     fecha_pago: str,
     detalle: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Intenta disparar plantilla Reauthentication de Supabase Auth.
+    """Compatibilidad: este proyecto no acepta reauthentication como link type.
 
-    Nota: en varios proyectos Supabase exige sesión activa para reauthentication;
-    por eso esta llamada puede depender de la configuración del proyecto.
+    Se redirige al envio por plantilla Magic link or OTP.
     """
-    try:
-        payload = {
-            "type": "reauthentication",
-            "email": to_email,
-            "options": {
-                "redirect_to": f"{_auth_redirect_base()}/login",
-                "data": {
-                    "nombre": nombre,
-                    "monto": round(float(monto), 2),
-                    "fecha": fecha_pago,
-                    "detalle": (detalle or "Pago mensual").strip(),
-                    "tipo_pago": "mensual",
-                },
-            },
-        }
-        link_resp = supabase.auth.admin.generate_link(payload)
-        print(f"[personal_pago_automatico_service] generate_link reauth para {to_email}: {link_resp}")
-
-        action_link = None
-        if isinstance(link_resp, dict):
-            props = link_resp.get("properties") or link_resp.get("data") or {}
-            action_link = props.get("action_link") or props.get("actionLink")
-        else:
-            props = getattr(link_resp, "properties", None) or getattr(link_resp, "data", None)
-            action_link = getattr(props, "action_link", None) or getattr(props, "actionLink", None)
-
-        if not action_link:
-            return {
-                "ok": False,
-                "message": "No se genero action_link en Reauthentication (no se confirmo envio).",
-            }
-
-        return {"ok": True, "message": "Correo enviado con plantilla Reauthentication"}
-    except Exception as exc:
-        print(f"[personal_pago_automatico_service] error reauthentication: {exc}")
-        return {"ok": False, "message": f"Error Reauthentication: {exc}"}
+    return _send_magic_link_template(
+        to_email=to_email,
+        nombre=nombre,
+        monto=monto,
+        fecha_pago=fecha_pago,
+        tipo="mensual",
+        detalle=detalle,
+    )
 
 
 def enviar_comprobante_pago_email(
@@ -140,7 +156,7 @@ def enviar_comprobante_pago_email(
     """Envia comprobante via plantillas de Supabase Auth.
 
     - tipo=bono: plantilla Invite user
-    - tipo=mensual: plantilla Reauthentication
+    - tipo=mensual: plantilla Magic link or OTP (compatibilidad)
     """
     if not to_email:
         return {"ok": False, "message": "Personal sin correo"}
