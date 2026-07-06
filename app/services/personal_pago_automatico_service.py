@@ -44,6 +44,46 @@ def _auth_redirect_base() -> str:
     return (os.getenv("FRONTEND_URL") or "https://vidriobras.com").rstrip("/")
 
 
+def _comprobante_redirect_url() -> str:
+    """Ruta de frontend para confirmar comprobante sin iniciar sesion cliente."""
+    return f"{_auth_redirect_base()}/login?flow=comprobante"
+
+
+def _update_auth_metadata_for_email(to_email: str, metadata: Dict[str, Any]) -> None:
+    """Actualiza user_metadata en Auth para que el template tenga .Data en correos de usuarios existentes."""
+    try:
+        users_resp = supabase.auth.admin.list_users()
+    except Exception as exc:
+        print(f"[personal_pago_automatico_service] list_users no disponible: {exc}")
+        return
+
+    users = []
+    if isinstance(users_resp, dict):
+        users = users_resp.get("users") or []
+    else:
+        users = getattr(users_resp, "users", None) or getattr(users_resp, "data", None) or []
+
+    email_norm = (to_email or "").strip().lower()
+    target_user = None
+    for u in users:
+        u_email = (u.get("email") if isinstance(u, dict) else getattr(u, "email", "") or "").strip().lower()
+        if u_email == email_norm:
+            target_user = u
+            break
+
+    if not target_user:
+        return
+
+    user_id = target_user.get("id") if isinstance(target_user, dict) else getattr(target_user, "id", None)
+    if not user_id:
+        return
+
+    try:
+        supabase.auth.admin.update_user_by_id(user_id, {"user_metadata": metadata})
+    except Exception as exc:
+        print(f"[personal_pago_automatico_service] update_user_by_id fallo para {to_email}: {exc}")
+
+
 def _send_invite_template(
     to_email: str,
     nombre: str,
@@ -61,7 +101,7 @@ def _send_invite_template(
                 "detalle": (detalle or "Pago de bono").strip(),
                 "tipo_pago": "bono",
             },
-            "redirect_to": f"{_auth_redirect_base()}/login",
+            "redirect_to": _comprobante_redirect_url(),
         }
         invite_resp = supabase.auth.admin.invite_user_by_email(to_email, payload)
         print(f"[personal_pago_automatico_service] invite_user enviado a {to_email}: {invite_resp}")
@@ -104,17 +144,20 @@ def _send_magic_link_template(
 ) -> Dict[str, Any]:
     """Envia correo con plantilla Magic link or OTP de Supabase Auth."""
     try:
+        metadata = {
+            "nombre": nombre,
+            "monto": round(float(monto), 2),
+            "fecha": fecha_pago,
+            "detalle": (detalle or "Pago").strip(),
+            "tipo_pago": (tipo or "mensual"),
+        }
+        _update_auth_metadata_for_email(to_email, metadata)
+
         resp = supabase.auth.sign_in_with_otp({
             "email": to_email,
             "options": {
-                "email_redirect_to": f"{_auth_redirect_base()}/login",
-                "data": {
-                    "nombre": nombre,
-                    "monto": round(float(monto), 2),
-                    "fecha": fecha_pago,
-                    "detalle": (detalle or "Pago").strip(),
-                    "tipo_pago": (tipo or "mensual"),
-                },
+                "email_redirect_to": _comprobante_redirect_url(),
+                "data": metadata,
             },
         })
         print(f"[personal_pago_automatico_service] magic_link enviado a {to_email}: {resp}")
