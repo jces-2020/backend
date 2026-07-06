@@ -151,8 +151,33 @@ def _collect_cliente_route_handlers(flask_app: Flask) -> list[dict]:
     return rows
 
 
+def _collect_cliente_route_collisions(flask_app: Flask) -> list[dict]:
+    """Detecta colisiones de rutas por combinación metodo+rule en /api/clientes*."""
+    handlers = _collect_cliente_route_handlers(flask_app)
+    bucket = {}
+    for row in handlers:
+        for method in row.get("methods", []):
+            key = f"{method} {row.get('rule')}"
+            bucket.setdefault(key, []).append({
+                "endpoint": row.get("endpoint"),
+                "view_module": row.get("view_module"),
+                "view_func": row.get("view_func"),
+                "source_file": row.get("source_file"),
+            })
+
+    collisions = []
+    for key, entries in sorted(bucket.items()):
+        if len(entries) > 1:
+            collisions.append({
+                "route": key,
+                "handlers": entries,
+            })
+    return collisions
+
+
 RUNTIME_BUILD_INFO["cliente_routes"] = _collect_cliente_routes(app)
 RUNTIME_BUILD_INFO["cliente_route_handlers"] = _collect_cliente_route_handlers(app)
+RUNTIME_BUILD_INFO["cliente_route_collisions"] = _collect_cliente_route_collisions(app)
 RUNTIME_BUILD_INFO["clientes_controller_sha256"] = _file_sha256(
     os.path.join(os.path.dirname(__file__), "controllers", "clientes_controller.py")
 )
@@ -171,6 +196,11 @@ def _print_runtime_diagnostics(flask_app: Flask) -> None:
     print(f"[BOOT] clientes_routes={len(cliente_rules)}")
     for r in cliente_rules:
         print(f"[BOOT] route {r}")
+    collisions = _collect_cliente_route_collisions(flask_app)
+    if collisions:
+        print(f"[BOOT][WARN] cliente_route_collisions={len(collisions)}")
+        for c in collisions:
+            print(f"[BOOT][WARN] collision {c['route']}")
     print("=" * 60 + "\n")
 
 
