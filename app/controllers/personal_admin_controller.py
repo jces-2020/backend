@@ -282,13 +282,21 @@ def ejecutar_pago_automatico():
 def asignar_pagar_notificar_bono():
     """Asigna bono, registra pago como gasto y envia comprobante por correo."""
     data = request.get_json() or {}
-    personal_id = (data.get("personal_id") or "").strip()
+    personal_ids = data.get("personal_ids") or []
+    personal_id_unico = (data.get("personal_id") or "").strip()
     bono_id = (data.get("bono_id") or "").strip()
     monto = data.get("monto")
     fecha_pago = (data.get("fecha") or str(date.today())).strip()
 
-    if not personal_id:
-        return jsonify({"success": False, "message": "personal_id requerido"}), 400
+    if not isinstance(personal_ids, list):
+        personal_ids = []
+    personal_ids = [str(pid).strip() for pid in personal_ids if str(pid).strip()]
+    if personal_id_unico:
+        personal_ids.append(personal_id_unico)
+    personal_ids = list(dict.fromkeys(personal_ids))
+
+    if len(personal_ids) == 0:
+        return jsonify({"success": False, "message": "personal_id o personal_ids requerido"}), 400
     if not bono_id:
         return jsonify({"success": False, "message": "bono_id requerido"}), 400
     if monto is None:
@@ -302,13 +310,62 @@ def asignar_pagar_notificar_bono():
     if monto_float <= 0:
         return jsonify({"success": False, "message": "Monto debe ser mayor a 0"}), 400
 
-    try:
-        resultado = pagar_bono_y_notificar(
-            personal_id=personal_id,
-            bono_id=bono_id,
-            monto=monto_float,
-            fecha_pago=fecha_pago,
+    resultados = []
+    exitos = 0
+    correos_ok = 0
+    correos_error = 0
+
+    for pid in personal_ids:
+        try:
+            resultado = pagar_bono_y_notificar(
+                personal_id=pid,
+                bono_id=bono_id,
+                monto=monto_float,
+                fecha_pago=fecha_pago,
+            )
+            correo_estado = (resultado.get("correo") or {}).get("ok") is True
+            if correo_estado:
+                correos_ok += 1
+            else:
+                correos_error += 1
+            exitos += 1
+            resultados.append({
+                "personal_id": pid,
+                "ok": True,
+                "correo": resultado.get("correo"),
+                "pago": resultado.get("pago"),
+            })
+        except Exception as exc:
+            correos_error += 1
+            resultados.append({
+                "personal_id": pid,
+                "ok": False,
+                "error": str(exc),
+            })
+
+    fallidos = len(personal_ids) - exitos
+    ok_global = fallidos == 0
+
+    if ok_global:
+        message = (
+            f"Proceso completado para {exitos} personal(es). "
+            f"Correos OK: {correos_ok}, correos con error: {correos_error}."
         )
-        return jsonify(resultado), 200
-    except Exception as exc:
-        return jsonify({"success": False, "message": f"Error procesando bono: {exc}"}), 500
+    else:
+        message = (
+            f"Proceso parcial: exitos={exitos}, fallidos={fallidos}. "
+            f"Correos OK: {correos_ok}, correos con error: {correos_error}."
+        )
+
+    return jsonify({
+        "success": ok_global,
+        "message": message,
+        "data": {
+            "total": len(personal_ids),
+            "exitos": exitos,
+            "fallidos": fallidos,
+            "correos_ok": correos_ok,
+            "correos_error": correos_error,
+            "resultados": resultados,
+        },
+    }), 200 if ok_global else 207

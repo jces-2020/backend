@@ -63,17 +63,20 @@ def _send_invite_template(
             },
             "redirect_to": f"{_auth_redirect_base()}/login",
         }
-        supabase.auth.admin.invite_user_by_email(to_email, payload)
+        invite_resp = supabase.auth.admin.invite_user_by_email(to_email, payload)
+        print(f"[personal_pago_automatico_service] invite_user enviado a {to_email}: {invite_resp}")
         return {"ok": True, "message": "Correo enviado con plantilla Invite user"}
     except Exception as exc:
         print(f"[personal_pago_automatico_service] error invite_user: {exc}")
-        return {
-            "ok": False,
-            "message": (
-                "No se envio correo de bono con plantilla Invite user. "
-                f"Detalle: {exc}"
-            ),
-        }
+        # Para cuentas existentes, Invite puede fallar; usamos Reauthentication como alternativa válida
+        # (plantilla indicada) en vez de Magic Link.
+        return _send_reauth_template(
+            to_email=to_email,
+            nombre=nombre,
+            monto=monto,
+            fecha_pago=fecha_pago,
+            detalle=(detalle or "Pago de bono"),
+        )
 
 
 def _send_reauth_template(
@@ -103,7 +106,23 @@ def _send_reauth_template(
                 },
             },
         }
-        supabase.auth.admin.generate_link(payload)
+        link_resp = supabase.auth.admin.generate_link(payload)
+        print(f"[personal_pago_automatico_service] generate_link reauth para {to_email}: {link_resp}")
+
+        action_link = None
+        if isinstance(link_resp, dict):
+            props = link_resp.get("properties") or link_resp.get("data") or {}
+            action_link = props.get("action_link") or props.get("actionLink")
+        else:
+            props = getattr(link_resp, "properties", None) or getattr(link_resp, "data", None)
+            action_link = getattr(props, "action_link", None) or getattr(props, "actionLink", None)
+
+        if not action_link:
+            return {
+                "ok": False,
+                "message": "No se genero action_link en Reauthentication (no se confirmo envio).",
+            }
+
         return {"ok": True, "message": "Correo enviado con plantilla Reauthentication"}
     except Exception as exc:
         print(f"[personal_pago_automatico_service] error reauthentication: {exc}")
@@ -295,4 +314,3 @@ def pagar_bono_y_notificar(personal_id: str, bono_id: str, monto: float, fecha_p
         "pago": resultado_pago,
         "correo": correo_result,
     }
-
