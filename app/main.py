@@ -58,6 +58,29 @@ print("AUTO-REGISTRANDO BLUEPRINTS...")
 print("=" * 60)
 auto_register_blueprints(app)
 
+
+def _print_runtime_diagnostics(flask_app: Flask) -> None:
+    """Imprime diagnostico basico para detectar despliegues apuntando a rutas equivocadas."""
+    print("\n" + "=" * 60)
+    print("RUNTIME DIAGNOSTICS")
+    print("=" * 60)
+    print(f"[BOOT] main_file={os.path.abspath(__file__)}")
+    print(f"[BOOT] cwd={os.getcwd()}")
+    cliente_rules = sorted(
+        {
+            f"{','.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))} {rule.rule}"
+            for rule in flask_app.url_map.iter_rules()
+            if rule.rule.startswith('/api/clientes')
+        }
+    )
+    print(f"[BOOT] clientes_routes={len(cliente_rules)}")
+    for r in cliente_rules:
+        print(f"[BOOT] route {r}")
+    print("=" * 60 + "\n")
+
+
+_print_runtime_diagnostics(app)
+
 # Supabase debug
 from services.supabase_client import IS_SERVICE, SUPABASE_URL
 
