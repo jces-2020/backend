@@ -449,3 +449,4 @@ def confirmar_supabase_api():
         }), 200
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error confirmando Supabase: {str(e)}'}), 500
+        
