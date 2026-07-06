@@ -7,6 +7,8 @@ Beneficio: Agregar nuevos endpoints = crear archivo, listo. Sin editar main.py
 """
 import sys
 import os
+from datetime import datetime, timezone
+import subprocess
 
 # Asegurar que tanto 'backend/app' (para from services.X)
 # como 'backend' (para from app.services.X) estén en sys.path
@@ -59,6 +61,42 @@ print("=" * 60)
 auto_register_blueprints(app)
 
 
+def _detect_git_sha(repo_root: str) -> str:
+    """Obtiene el SHA corto de git cuando el repo .git está disponible."""
+    try:
+        sha = subprocess.check_output(
+            ["git", "-C", repo_root, "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            text=True,
+        ).strip()
+        return sha or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _build_info() -> dict:
+    """Construye metadata para validar despliegue en runtime."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    commit = (
+        os.getenv("RELEASE_SHA", "").strip()
+        or os.getenv("GITHUB_SHA", "").strip()[:7]
+        or _detect_git_sha(repo_root)
+    )
+    return {
+        "service": "vidriobras-backend",
+        "commit": commit,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "main_file": os.path.abspath(__file__),
+        "cwd": os.getcwd(),
+        "repo_root": repo_root,
+        "python": sys.version.split()[0],
+    }
+
+
+RUNTIME_BUILD_INFO = _build_info()
+
+
 def _print_runtime_diagnostics(flask_app: Flask) -> None:
     """Imprime diagnostico basico para detectar despliegues apuntando a rutas equivocadas."""
     print("\n" + "=" * 60)
@@ -66,6 +104,8 @@ def _print_runtime_diagnostics(flask_app: Flask) -> None:
     print("=" * 60)
     print(f"[BOOT] main_file={os.path.abspath(__file__)}")
     print(f"[BOOT] cwd={os.getcwd()}")
+    print(f"[BOOT] commit={RUNTIME_BUILD_INFO.get('commit')}")
+    print(f"[BOOT] started_at={RUNTIME_BUILD_INFO.get('started_at')}")
     cliente_rules = sorted(
         {
             f"{','.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))} {rule.rule}"
@@ -153,6 +193,12 @@ def debug_supabase():
         "is_service": bool(IS_SERVICE),
         "supabase_url": SUPABASE_URL
     })
+
+
+@app.route("/api/build-info")
+def build_info():
+    """Devuelve metadata de build para verificar despliegues."""
+    return jsonify(RUNTIME_BUILD_INFO), 200
 
 
 # ===============================
