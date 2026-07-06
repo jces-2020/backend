@@ -16,6 +16,12 @@ NO hace:
 from flask import Blueprint, request, jsonify
 import re
 import uuid
+import os
+import json
+import base64
+import hmac
+import hashlib
+import time
 from app.services.cliente_service import ClienteService
 from app.repositories.cliente_repository import ClienteRepository
 from app.services.supabase_client import supabase
@@ -84,6 +90,26 @@ def _email_formato_valido(correo: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', correo or ''))
 
 
+def _build_jwt_for_cliente(cliente: dict) -> str:
+    """Genera JWT local para sesión del panel cliente."""
+    secret = os.environ.get('JWT_SECRET', 'vidriobras-secret')
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "sub": cliente.get('id_cliente'),
+        "email": cliente.get('correo'),
+        "name": cliente.get('nombre'),
+        "exp": int(time.time()) + 7 * 24 * 3600,
+        "aud": "cliente"
+    }
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
+
+    signing_input = f"{b64url(json.dumps(header).encode())}.{b64url(json.dumps(payload).encode())}"
+    signature = hmac.new(secret.encode('utf-8'), signing_input.encode('utf-8'), hashlib.sha256).digest()
+    return signing_input + "." + b64url(signature)
+
+
 def _auth_sign_up(correo: str, contrasena: str, nombre: str) -> tuple[bool, str]:
     """Crea usuario en Supabase Auth y dispara correo de confirmación."""
     try:
@@ -118,6 +144,18 @@ def _auth_email_confirmado(correo: str, contrasena: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _extraer_auth_user(access_token: str):
+    """Obtiene user de Supabase Auth a partir del access_token del enlace."""
+    try:
+        user_resp = supabase.auth.get_user(access_token)
+        user = getattr(user_resp, 'user', None)
+        if user is None and isinstance(user_resp, dict):
+            user = user_resp.get('user')
+        return user
+    except Exception:
+        return None
 
 # ==================== CRUD ENDPOINTS ====================
 
@@ -333,16 +371,8 @@ def registrar_cliente_api():
             return jsonify({'success': False, 'message': 'Ya existe un cliente registrado con este nombre.'}), 409
 
         auth_ok, auth_msg = _auth_sign_up(correo, contrasena, nombre)
-        if not auth_ok and auth_msg != 'already_registered':
+        if not auth_ok:
             return jsonify({'success': False, 'message': auth_msg}), 400
-
-        # Flujo requerido: cliente se crea SOLO cuando el correo ya está confirmado.
-        if not _auth_email_confirmado(correo, contrasena):
-            return jsonify({
-                'success': False,
-                'verification_pending': True,
-                'message': 'Te enviamos un correo de confirmación (Confirm sign up). Confírmalo y vuelve a crear la cuenta.'
-            }), 409
 
         payload = {
             'nombre': nombre,
@@ -359,7 +389,7 @@ def registrar_cliente_api():
 
         return jsonify({
             'success': True,
-            'message': 'Registro exitoso. Revisa tu Gmail para confirmar tu cuenta.',
+            'message': 'Registro exitoso. Mira tu Gmail para confirmar tu cuenta.',
             'cliente': cliente.to_dict(),
         }), 201
 
@@ -370,3 +400,52 @@ def registrar_cliente_api():
     except Exception as e:
         print(f"Error en registrar_cliente_api: {str(e)}")
         return jsonify({'success': False, 'message': 'No se pudo registrar el cliente.'}), 500
+
+
+@cliente_api_bp.route('/confirmar-supabase', methods=['POST'])
+def confirmar_supabase_api():
+    """Convierte confirmación de Supabase (access_token) en JWT local y sesión cliente."""
+    try:
+        data = request.get_json() or {}
+        access_token = (data.get('access_token') or '').strip()
+        if not access_token:
+            return jsonify({'success': False, 'message': 'Falta access_token'}), 400
+
+        auth_user = _extraer_auth_user(access_token)
+        if not auth_user:
+            return jsonify({'success': False, 'message': 'No se pudo validar usuario de Supabase'}), 401
+
+        email = (getattr(auth_user, 'email', None) if not isinstance(auth_user, dict) else auth_user.get('email')) or ''
+        email = email.strip().lower()
+        if not email:
+            return jsonify({'success': False, 'message': 'Usuario sin correo en Supabase Auth'}), 400
+
+        cliente = _repository.find_by_correo(email)
+        if not cliente:
+            user_id = (getattr(auth_user, 'id', None) if not isinstance(auth_user, dict) else auth_user.get('id')) or ''
+            user_meta = (getattr(auth_user, 'user_metadata', None) if not isinstance(auth_user, dict) else auth_user.get('user_metadata')) or {}
+            nombre = (user_meta.get('name') or email.split('@')[0]).strip()
+
+            insert_resp = supabase.table('cliente').insert({
+                'correo': email,
+                'contraseña': user_id or 'supabase-auth',
+                'nombre': nombre,
+                'numero': '',
+                'documento': '',
+                'tipo_cliente_id': None,
+            }).execute()
+            if not insert_resp.data:
+                return jsonify({'success': False, 'message': 'No se pudo crear cliente local tras confirmar correo'}), 500
+            cliente_row = insert_resp.data[0]
+        else:
+            cliente_row = cliente.to_dict()
+
+        token = _build_jwt_for_cliente(cliente_row)
+        return jsonify({
+            'success': True,
+            'token': token,
+            'token_type': 'Bearer',
+            'cliente': cliente_row,
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Error confirmando Supabase: {str(e)}'}), 500
