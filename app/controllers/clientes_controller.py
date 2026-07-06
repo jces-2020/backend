@@ -66,7 +66,7 @@ def _build_jwt_for_cliente(cliente):
     signature = hmac.new(secret.encode('utf-8'), signing_input.encode('utf-8'), hashlib.sha256).digest()
     return signing_input + "." + b64url(signature)
 
-@clientes_bp.route('/api/clientes', methods=['GET'])
+@clientes_bp.route('/api/clientes-legacy', methods=['GET'])
 def get_clientes():
     # Allow optional filtering by documento or nombre
     documento = request.args.get('documento', None)
@@ -92,8 +92,8 @@ def get_clientes():
     clientes = response.data
     return jsonify(clientes)
 
-# Endpoint para agregar un cliente (POST)
-@clientes_bp.route('/api/clientes', methods=['POST'])
+# Endpoint legacy para agregar un cliente (POST)
+@clientes_bp.route('/api/clientes-legacy', methods=['POST'])
 def add_cliente():
     print('[CLIENTES][v2] POST /api/clientes (alta cliente)')
     data = request.json
@@ -158,10 +158,10 @@ def add_cliente():
         return jsonify({'success': False, 'message': 'No se pudo registrar el cliente.'}), 500
 
 
-@clientes_bp.route('/api/clientes/registrar', methods=['POST'])
+@clientes_bp.route('/api/clientes/legacy/registrar', methods=['POST'])
 def registrar_cliente_alias():
     """Alias para mantener compatibilidad con el frontend actual."""
-    print('[CLIENTES][v2] POST /api/clientes/registrar (alias)')
+    print('[CLIENTES][v2] POST /api/clientes/legacy/registrar (alias)')
     return add_cliente()
 
 @clientes_bp.route('/api/clientes/login', methods=['POST'])
@@ -238,4 +238,3 @@ def get_cliente_temp_access(cliente_id):
         }), 200
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-        
