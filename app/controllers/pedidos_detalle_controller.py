@@ -1,6 +1,11 @@
 ﻿from flask import Blueprint, jsonify, request
 from app.services.supabase_client import supabase
 from app.services.cortes_service import calcular_total_corte, es_material_aluminio
+from app.services.venta_detalle_service import (
+    obtener_carrito_ids_por_cliente,
+    obtener_cliente_id_por_carrito,
+    obtener_detalle_venta_por_carrito,
+)
 import os, json, base64, hmac, hashlib, time, re, threading
 
 pedidos_detalle_api = Blueprint('pedidos_detalle_api', __name__)
@@ -180,96 +185,7 @@ def _obtener_mapa_productos(producto_ids):
 
 
 def _construir_items_detalle(carrito_id):
-    try:
-        items_plancha = supabase.table('productos_carrito').select('*').eq('carrito_id', carrito_id).execute().data or []
-    except Exception:
-        items_plancha = []
-    try:
-        items_corte = supabase.table('cortes').select('*').eq('carrito_id', carrito_id).execute().data or []
-    except Exception:
-        items_corte = []
-
-    producto_ids = {
-        it.get('producto_id') for it in items_plancha if it.get('producto_id')
-    }
-    producto_ids.update(
-        it.get('producto_id') for it in items_corte if it.get('producto_id')
-    )
-    prod_map = _obtener_mapa_productos(list(producto_ids))
-
-    joined = []
-    total_precio = 0.0
-
-    for it in items_plancha:
-        p = prod_map.get(it.get('producto_id'))
-        if not p:
-            continue
-
-        cantidad = _to_float(it.get('cantidad'), 0)
-        precio = _to_float(p.get('precio_unitario'), 0)
-        subtotal = round(precio * cantidad, 2)
-        total_precio += subtotal
-
-        joined.append({
-            'item_key': f"plancha:{p.get('id_producto')}",
-            'tipo_item': 'plancha',
-            'id_producto': p.get('id_producto'),
-            'nombre': p.get('nombre'),
-            'codigo': p.get('codigo'),
-            'cantidad': cantidad,
-            'fila': p.get('fila'),
-            'columna': p.get('columna'),
-            'precio_unitario': precio,
-            'subtotal': subtotal,
-            'grosor': p.get('grosor'),
-            'descripcion': p.get('descripcion'),
-        })
-
-    for corte in items_corte:
-        producto_id = corte.get('producto_id')
-        if not producto_id:
-            continue
-        p = prod_map.get(producto_id)
-        if not p:
-            continue
-
-        cantidad = _to_float(corte.get('cantidad'), 0)
-        precio = _to_float(p.get('precio_unitario'), 0)
-        es_aluminio = es_material_aluminio(p)
-        subtotal = calcular_total_corte(corte, precio, es_aluminio)
-        ancho_cm = _to_float(corte.get('ancho_cm'), 0)
-        alto_cm = _to_float(corte.get('alto_cm'), 0)
-        medida_principal_cm = ancho_cm if ancho_cm > 0 else alto_cm
-        if es_aluminio:
-            medida_texto = f"Largo: {medida_principal_cm:g} cm" if medida_principal_cm > 0 else ''
-        elif ancho_cm > 0 and alto_cm > 0:
-            medida_texto = f"{ancho_cm:g} x {alto_cm:g} cm"
-        else:
-            medida_texto = ''
-        total_precio += subtotal
-
-        joined.append({
-            'item_key': f"corte:{corte.get('id_corte') or producto_id}",
-            'tipo_item': 'corte',
-            'id_producto': producto_id,
-            'nombre': p.get('nombre') or 'Cortes personalizados',
-            'codigo': p.get('codigo'),
-            'cantidad': cantidad,
-            'fila': p.get('fila'),
-            'columna': p.get('columna'),
-            'precio_unitario': precio,
-            'subtotal': subtotal,
-            'grosor': p.get('grosor'),
-            'descripcion': p.get('descripcion'),
-            'ancho_cm': ancho_cm,
-            'alto_cm': alto_cm,
-            'es_aluminio': es_aluminio,
-            'medida_principal_cm': medida_principal_cm,
-            'medida_texto': medida_texto,
-            'corte_id': corte.get('id_corte'),
-        })
-
-    return joined, len(joined), round(total_precio, 2)
+    return obtener_detalle_venta_por_carrito(carrito_id)
 
 
 # ─── RUTAS ────────────────────────────────────────────────────────────────────
@@ -430,7 +346,7 @@ def actualizar_estado_notificacion_admin(notif_id):
         if not eid:
             return jsonify({"success": False, "message": "Estado no configurado en BD"}), 400
 
-        nres = supabase.table("notificacion").select("id_notificacion,estado_notificacion_id,descripcion,id_cliente,nombre").eq("id_notificacion", notif_id).limit(1).execute()
+        nres = supabase.table("notificacion").select("id_notificacion,estado_notificacion_id,descripcion,venta_id,nombre").eq("id_notificacion", notif_id).limit(1).execute()
         notif_data = None
         if nres and getattr(nres, "data", None):
             notif_data = nres.data[0]
@@ -486,16 +402,11 @@ def actualizar_estado_notificacion_admin(notif_id):
             # Preservar carrito_id si no estaba en la descripcion original
             if not meta.get("carrito_id"):
                 try:
-                    client_id = notif_data.get("id_cliente")
-                    if client_id:
-                        cres = supabase.table("carrito_compras") \
-                            .select("id_carrito") \
-                            .eq("cliente_id", client_id) \
-                            .in_("estado", ["en proceso", "pagado", "pendiente", "inicio", "listo"]) \
-                            .order("created_at", desc=True) \
-                            .limit(1).execute()
-                        if cres.data:
-                            meta["carrito_id"] = cres.data[0].get("id_carrito") or ""
+                        venta_id = notif_data.get("venta_id")
+                        if venta_id:
+                            vres = supabase.table("venta").select("carrito_id").eq("id_venta", venta_id).limit(1).execute()
+                            if getattr(vres, "data", None):
+                                meta["carrito_id"] = vres.data[0].get("carrito_id") or ""
                 except Exception as _ce:
                     print(f"[WARN] No se pudo recuperar carrito_id para lock: {_ce}")
             if worker_id:
@@ -611,8 +522,9 @@ def detalle_notificacion_admin(notif_id):
 
         # Cliente
         cliente = None
-        if carrito.get('cliente_id'):
-            cli = supabase.table('cliente').select('*').eq('id_cliente', carrito['cliente_id']).limit(1).execute()
+        cliente_id = obtener_cliente_id_por_carrito(carrito_id)
+        if cliente_id:
+            cli = supabase.table('cliente').select('*').eq('id_cliente', cliente_id).limit(1).execute()
             if cli and cli.data:
                 row = cli.data[0]
                 cliente = {
@@ -672,8 +584,11 @@ def buscar_pedidos_por_cliente_admin():
         cli = cli_res.data[0]
         cid = cli.get('id_cliente')
 
-        res     = supabase.table('carrito_compras').select('*').eq('cliente_id', cid).execute()
-        carritos = res.data or []
+        carrito_ids = obtener_carrito_ids_por_cliente(cid)
+        carritos = []
+        if carrito_ids:
+            res = supabase.table('carrito_compras').select('*').in_('id_carrito', carrito_ids).execute()
+            carritos = res.data or []
         pedidos  = []
         for c in carritos:
             pedidos.append({
@@ -719,9 +634,10 @@ def obtener_detalle_pedido_admin(carrito_id):
 
         # Cliente
         cliente_row = None
-        if carrito.get('cliente_id'):
+        cliente_id = obtener_cliente_id_por_carrito(carrito_id)
+        if cliente_id:
             try:
-                cli = supabase.table('cliente').select('*').eq('id_cliente', carrito['cliente_id']).limit(1).execute()
+                cli = supabase.table('cliente').select('*').eq('id_cliente', cliente_id).limit(1).execute()
                 if cli and cli.data:
                     cliente_row = cli.data[0]
             except Exception:
@@ -811,7 +727,7 @@ def backfill_asociar_clientes():
         except Exception:
             pass
 
-        res    = supabase.table('notificacion').select('id_notificacion, nombre, descripcion').execute()
+        res    = supabase.table('notificacion').select('id_notificacion, nombre, descripcion, venta_id').execute()
         notifs = getattr(res, 'data', []) or []
 
         summary = {
@@ -830,17 +746,13 @@ def backfill_asociar_clientes():
                     details.append({'carrito_id': None, 'notif_nombre': n.get('nombre'), 'action': 'skip:no_carrito'})
                     continue
 
-                car = supabase.table('carrito_compras').select('id_carrito, cliente_id').eq('id_carrito', carrito_id).limit(1).execute()
+                car = supabase.table('carrito_compras').select('id_carrito').eq('id_carrito', carrito_id).limit(1).execute()
                 if not car or not getattr(car, 'data', None):
                     summary['skipped_no_carrito'] += 1
                     details.append({'carrito_id': carrito_id, 'notif_nombre': n.get('nombre'), 'action': 'skip:carrito_no_existe'})
                     continue
 
-                carrito = car.data[0]
-                if carrito.get('cliente_id'):
-                    summary['skipped_tiene_cliente'] += 1
-                    details.append({'carrito_id': carrito_id, 'notif_nombre': n.get('nombre'), 'action': 'skip:ya_tiene_cliente'})
-                    continue
+                # El esquema nuevo no asocia cliente al carrito; el vínculo vive en venta.
 
                 notif_nombre = (n.get('nombre') or '').strip()
                 if notif_nombre.lower() in ('', 'cliente'):
@@ -865,10 +777,10 @@ def backfill_asociar_clientes():
                     details.append({'carrito_id': carrito_id, 'notif_nombre': notif_nombre,
                                     'matched_cliente_id': matched.get('id_cliente'), 'action': 'would_update'})
                 else:
-                    supabase.table('carrito_compras').update({'cliente_id': matched.get('id_cliente')}).eq('id_carrito', carrito_id).execute()
-                    summary['updated'] += 1
-                    details.append({'carrito_id': carrito_id, 'notif_nombre': notif_nombre,
-                                    'matched_cliente_id': matched.get('id_cliente'), 'action': 'updated'})
+                        # El vínculo cliente<->carrito ya no se persiste en carrito_compras.
+                        summary['skipped_tiene_cliente'] += 1
+                        details.append({'carrito_id': carrito_id, 'notif_nombre': notif_nombre,
+                                        'matched_cliente_id': matched.get('id_cliente'), 'action': 'skip:no_carrito_cliente'})
             except Exception as ex:
                 summary['errors'] += 1
                 details.append({'carrito_id': meta.get('carrito_id') if 'meta' in locals() else None,
@@ -950,13 +862,8 @@ def eliminar_pedido_admin(carrito_id):
         deleted_carritos = 0
         deleted_notifs   = 0
 
-        # 1) Items
-        try:
-            it_del = supabase.table('productos_carrito').delete().eq('carrito_id', carrito_id).execute()
-            if getattr(it_del, 'data', None):
-                deleted_items = len(it_del.data)
-        except Exception:
-            deleted_items = 0
+        # 1) Ítems: ya no se elimina venta; el historial debe permanecer.
+        deleted_items = 0
 
         # 2) Carrito
         try:
@@ -1070,11 +977,8 @@ def eliminar_notificacion_admin(notif_id):
             except Exception:
                 deleted_cortes = 0
 
-            try:
-                items_del = supabase.table('productos_carrito').delete().eq('carrito_id', carrito_id).execute()
-                deleted_items = len(getattr(items_del, 'data', None) or [])
-            except Exception:
-                deleted_items = 0
+            # En el nuevo esquema no se borra la venta asociada.
+            deleted_items = 0
 
             try:
                 car_del = supabase.table('carrito_compras').delete().eq('id_carrito', carrito_id).execute()

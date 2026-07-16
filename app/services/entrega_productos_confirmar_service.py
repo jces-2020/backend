@@ -1,7 +1,6 @@
 """
 Servicio para confirmar productos entregados:
 - Descuenta stock
-- Elimina de productos_carrito
 - Guarda en reporte_entregas
 """
 from typing import List, Dict, Any
@@ -12,8 +11,7 @@ def confirmar_productos_entregados(carrito_id: str, items: List[Dict[str, Any]])
     """
     Confirma productos entregados:
     1. Descuenta stock de productos
-    2. Elimina registros de productos_carrito
-    3. Guarda en reporte_entregas
+    2. Guarda en reporte_entregas
     """
     try:
         if not carrito_id or not items:
@@ -66,14 +64,8 @@ def confirmar_productos_entregados(carrito_id: str, items: List[Dict[str, Any]])
                 except Exception as _pe:
                     print(f"[entrega_confirmar] Pusher omitido: {_pe}")
                 
-                # Eliminar de productos_carrito
-                supabase.table("productos_carrito") \
-                    .delete() \
-                    .eq("carrito_id", carrito_id) \
-                    .eq("producto_id", producto_id) \
-                    .execute()
-                
-                print(f"Eliminado de carrito: {producto_id}")
+                # El historial ya vive en venta; no se borra la línea confirmada.
+                print(f"Confirmado en venta: {producto_id}")
                 
                 # Guardar datos del producto para el reporte
                 productos_guardados.append({

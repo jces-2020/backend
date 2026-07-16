@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 from services.supabase_client import supabase
+from services.venta_detalle_service import obtener_venta_ids_por_cliente
 
 
 class ClienteGraficoService:
@@ -102,15 +103,25 @@ class ClienteGraficoService:
         fecha_inicio: datetime,
         fecha_fin: datetime
     ) -> List[Dict[str, Any]]:
-        response = supabase.table("registro_pago").select(
-            "fecha, monto"
-        ).eq("cliente_id", cliente_id).gte(
-            "fecha", fecha_inicio.date().isoformat()
-        ).lte(
-            "fecha", fecha_fin.date().isoformat()
-        ).order("fecha").execute()
+        venta_ids = obtener_venta_ids_por_cliente(cliente_id)
+        if not venta_ids:
+            return []
 
-        return response.data or []
+        response = supabase.table("venta").select(
+            "fecha_venta as fecha,monto"
+        ).in_("id_venta", venta_ids).gte(
+            "fecha_venta", fecha_inicio.date().isoformat()
+        ).lte(
+            "fecha_venta", fecha_fin.date().isoformat()
+        ).order("fecha_venta").execute()
+
+        pagos = []
+        for row in response.data or []:
+            pagos.append({
+                "fecha": row.get("fecha") or row.get("fecha_venta"),
+                "monto": row.get("monto"),
+            })
+        return pagos
 
     @staticmethod
     def _agrupar_por_dia(

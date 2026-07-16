@@ -9,7 +9,7 @@ def carrito_prueba():
     # Simular un carrito con estado y productos agregados
     estado = "pendiente"
     # Usa dos productos reales de la base de datos (puedes cambiar los IDs por los que quieras probar)
-    productos_carrito = [
+    items_carrito = [
         {"id_producto": "1640d537-e48b-4efe-84af-1ba2aab4461b", "cantidad": 2},
         {"id_producto": "3c36959a-33c5-4997-a34f-cf2ed1905814", "cantidad": 1}
     ]
@@ -22,11 +22,11 @@ def carrito_prueba():
         fecha_entrega = request.form.get('fecha_entrega', '')
         descripcion = request.form.get('descripcion', '')
         mensaje = f"Pedido recibido para entregar en '{ubicacion}' el día {fecha_entrega}. Nota: {descripcion}"
-    ids = [p["id_producto"] for p in productos_carrito]
+    ids = [p["id_producto"] for p in items_carrito]
     productos = ProductoService.obtener_productos_por_ids(ids)
     tabla = []
     total = 0
-    for pcar in productos_carrito:
+    for pcar in items_carrito:
         prod = next((x for x in productos if x.id == pcar['id_producto']), None)
         if prod:
             # Suponiendo que el modelo Producto tiene precio_unitario como atributo extraído del dict

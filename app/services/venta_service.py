@@ -11,7 +11,7 @@ def registrar_venta(total: float, metodo: str, caja_id: Optional[str] = None) ->
     
     # 1. Insertar venta
     venta_payload = {
-        "total": total,
+        "monto": total,
         "fecha_venta": fecha_actual,
         "metodo": metodo,
         "caja_id": caja_id

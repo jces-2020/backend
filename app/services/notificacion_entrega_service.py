@@ -12,7 +12,8 @@ def crear_notificacion_entrega(
     carrito_id: str,
     nombre_cliente: str,
     cantidad_items: int,
-    descripcion: Optional[str] = None
+    descripcion: Optional[str] = None,
+    venta_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Crea una notificación de entrega en la tabla 'notificacion'.
@@ -38,7 +39,7 @@ def crear_notificacion_entrega(
             'nombre': nombre_cliente,
             'descripcion': descripcion,
             'estado_notificacion_id': estado_id,
-            'id_cliente': cliente_id,
+            'venta_id': venta_id,
             'tipo': 'entrega'  # Tipo de notificación para entregas
         }
         

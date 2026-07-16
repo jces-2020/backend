@@ -34,8 +34,8 @@ def obtener_grafico_pagos_cliente():
         print(f"[GRAFICO] cliente_id={cliente_id} mes={mes}", file=sys.stderr, flush=True)
         # Verificar cuántos registros existen para este cliente
         try:
-            _dbg = supabase.table("registro_pago").select("id_registro, fecha, monto").eq("cliente_id", cliente_id).limit(5).execute()
-            print(f"[GRAFICO] registros en BD: {_dbg.data}", file=sys.stderr, flush=True)
+            _dbg = supabase.table("venta").select("id_venta, fecha_venta, monto").eq("cliente_id", cliente_id).limit(5).execute()
+            print(f"[GRAFICO] ventas en BD: {_dbg.data}", file=sys.stderr, flush=True)
         except Exception as _e:
             print(f"[GRAFICO] error debug: {_e}", file=sys.stderr, flush=True)
         resultado = ClienteGraficoService.obtener_grafico_pagos_mensuales(

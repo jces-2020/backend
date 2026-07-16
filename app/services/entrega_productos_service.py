@@ -7,98 +7,37 @@ import traceback
 from typing import Dict, Any, List
 from app.services.supabase_client import supabase
 from app.services.entrega_reporte_service import obtener_reporte_temporal
+from app.services.venta_detalle_service import (
+    obtener_carrito_ids_por_cliente,
+    obtener_detalle_venta_por_carrito,
+)
 
 
 def _obtener_carrito_id_por_cliente_fallback(notificacion_id: str, descripcion: str) -> str:
     """
-    Fallback inteligente: busca el carrito del cliente que mejor coincida
-    con los productos mencionados en la descripcion.
+    Fallback inteligente: busca el carrito más reciente del cliente.
     """
+    _ = descripcion
     try:
-        # Obtener id_cliente/cliente_id de la notificacion (compatibilidad)
         notif = supabase.table("notificacion") \
             .select("id_cliente, cliente_id") \
             .eq("id_notificacion", notificacion_id) \
             .limit(1) \
             .execute()
-        
+
         if not notif.data:
             return ""
-        
+
         row = notif.data[0] or {}
         cliente_id = row.get("id_cliente") or row.get("cliente_id")
         if not cliente_id:
             return ""
-        
-        # Buscar todos los carritos activos del cliente
-        carritos = supabase.table("carrito_compras") \
-            .select("id_carrito, estado") \
-            .eq("cliente_id", cliente_id) \
-            .in_("estado", ["pendiente", "pagado", "instalado", "en proceso", "inicio", "listo"]) \
-            .execute().data or []
-        
-        if not carritos:
+
+        carrito_ids = obtener_carrito_ids_por_cliente(cliente_id)
+        if not carrito_ids:
             return ""
-        
-        if len(carritos) == 1:
-            return carritos[0]["id_carrito"]
-        
-        # Si hay multiples carritos, calcular score basado en coincidencia de productos
-        mejor_carrito = None
-        mejor_score = -1
-        
-        # Extraer nombres de productos de la descripcion
-        desc_lower = descripcion.lower()
-        palabras_desc = set(re.findall(r'\b\w+\b', desc_lower))
-        
-        for carrito in carritos:
-            carrito_id = carrito["id_carrito"]
-            estado = carrito["estado"]
-            
-            # Obtener productos del carrito
-            items = supabase.table("productos_carrito") \
-                .select("producto_id") \
-                .eq("carrito_id", carrito_id) \
-                .execute().data or []
-            
-            if not items:
-                continue
-            
-            producto_ids = [it["producto_id"] for it in items if it.get("producto_id")]
-            
-            if producto_ids:
-                productos = supabase.table("productos") \
-                    .select("nombre") \
-                    .in_("id_producto", producto_ids) \
-                    .execute().data or []
-                
-                # Calcular score
-                score = 0
-                for prod in productos:
-                    nombre = (prod.get("nombre") or "").lower()
-                    # 5 puntos si el nombre completo esta en la descripcion
-                    if nombre and nombre in desc_lower:
-                        score += 5
-                    # 1 punto por cada palabra que coincida
-                    else:
-                        palabras_prod = set(re.findall(r'\b\w+\b', nombre))
-                        score += len(palabras_prod & palabras_desc)
-                
-                # Bonus por estado (preferir 'pagado' > 'instalado' > 'pendiente')
-                if estado == "pagado":
-                    score += 2
-                elif estado == "instalado":
-                    score += 1
-                
-                # Bonus por cantidad de items
-                score += len(items) * 0.5
-                
-                if score > mejor_score:
-                    mejor_score = score
-                    mejor_carrito = carrito_id
-        
-        return mejor_carrito or ""
-    
+        return carrito_ids[0]
+
     except Exception as e:
         print(f"Error en fallback de carrito: {e}")
         return ""
@@ -106,7 +45,7 @@ def _obtener_carrito_id_por_cliente_fallback(notificacion_id: str, descripcion: 
 
 def _obtener_carrito_id(notificacion_id: str) -> str:
     notif_result = supabase.table("notificacion") \
-        .select("descripcion") \
+        .select("descripcion, venta_id") \
         .eq("id_notificacion", notificacion_id) \
         .limit(1) \
         .execute()
@@ -114,33 +53,56 @@ def _obtener_carrito_id(notificacion_id: str) -> str:
     if not notif_result.data:
         return ""
 
-    descripcion = (notif_result.data[0] or {}).get("descripcion", "{}")
+    row = notif_result.data[0] or {}
+    descripcion = row.get("descripcion", "{}")
+    venta_id_directa = row.get("venta_id") or ""
+    if venta_id_directa:
+        venta = supabase.table("venta") \
+            .select("carrito_id") \
+            .eq("id_venta", venta_id_directa) \
+            .limit(1) \
+            .execute()
+        if getattr(venta, "data", None):
+            return venta.data[0].get("carrito_id") or ""
 
-    # Si Supabase devuelve el campo como dict (columna JSONB), leerlo directo
     if isinstance(descripcion, dict):
         carrito_id = descripcion.get("carrito_id") or ""
         if carrito_id:
             return carrito_id
-        # Dict sin carrito_id (p.ej. solo metadatos de lock): usar fallback por cliente
+        venta_id = descripcion.get("venta_id") or ""
+        if venta_id:
+            venta = supabase.table("venta") \
+                .select("carrito_id") \
+                .eq("id_venta", venta_id) \
+                .limit(1) \
+                .execute()
+            if getattr(venta, "data", None):
+                return venta.data[0].get("carrito_id") or ""
         return _obtener_carrito_id_por_cliente_fallback(notificacion_id, "")
 
-    # Intentar JSON primero
     try:
         meta = json.loads(descripcion)
         if isinstance(meta, dict):
             carrito_id = meta.get("carrito_id") or ""
             if carrito_id:
                 return carrito_id
+            venta_id = meta.get("venta_id") or ""
+            if venta_id:
+                venta = supabase.table("venta") \
+                    .select("carrito_id") \
+                    .eq("id_venta", venta_id) \
+                    .limit(1) \
+                    .execute()
+                if getattr(venta, "data", None):
+                    return venta.data[0].get("carrito_id") or ""
     except Exception:
         pass
 
-    # Fallback para descripciones como: "Pago ... (Carrito: <uuid>)"
     if isinstance(descripcion, str):
         match = re.search(r"Carrito:\s*([0-9a-fA-F-]{36})", descripcion)
         if match:
             return match.group(1)
 
-    # Fallback inteligente por cliente
     if isinstance(descripcion, str):
         carrito_id = _obtener_carrito_id_por_cliente_fallback(notificacion_id, descripcion)
         if carrito_id:
@@ -160,43 +122,19 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                 "success": True,
                 "message": "El cliente no agrego productos",
                 "data": [],
-                "carrito_id": ""
+                "carrito_id": "",
             }
 
-        items = supabase.table("productos_carrito") \
-            .select("producto_id, cantidad") \
-            .eq("carrito_id", carrito_id) \
-            .execute().data or []
+        productos, _, _ = obtener_detalle_venta_por_carrito(carrito_id)
+        productos = productos or []
 
-        producto_ids = [it.get("producto_id") for it in items if it.get("producto_id")]
-        productos = []
         productos_map = {}
-
-        if producto_ids:
-            datos = supabase.table("productos") \
-                .select("id_producto, nombre, descripcion, codigo, grosor, cantidad, precio_unitario, categoria_id, categoria(descripcion), almacen(fila, columna)") \
-                .in_("id_producto", producto_ids) \
-                .execute().data or []
-            productos_map = {p.get("id_producto"): p for p in datos}
-
-        for it in items:
-            pid = it.get("producto_id")
-            prod = productos_map.get(pid, {})
-            productos.append({
-                "producto_id": pid,
-                "nombre": prod.get("nombre"),
-                "descripcion": prod.get("descripcion"),
-                "codigo": prod.get("codigo"),
-                "grosor": prod.get("grosor"),
-                "precio_unitario": prod.get("precio_unitario") or 0,
-                "categoria_id": prod.get("categoria_id"),
-                "categoria": (prod.get("categoria") or {}).get("descripcion"),
-                "almacen_fila": (prod.get("almacen") or {}).get("fila"),
-                "almacen_columna": (prod.get("almacen") or {}).get("columna"),
-                "cantidad_cliente": it.get("cantidad") or 0,
-                "stock_cantidad": prod.get("cantidad") or 0,
-                "origen": "plancha"
-            })
+        for p in productos:
+            pid = p.get("producto_id")
+            if pid:
+                productos_map[pid] = p
+            if not p.get("origen"):
+                p["origen"] = "plancha"
 
         reporte_tmp = obtener_reporte_temporal(notificacion_id)
         if reporte_tmp.get("success"):
@@ -210,12 +148,12 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
 
                 prod = productos_map.get(pid)
                 if not prod:
-                    prod = supabase.table("productos") \
+                    prod_res = supabase.table("productos") \
                         .select("id_producto, nombre, descripcion, codigo, grosor, cantidad, precio_unitario, categoria_id, categoria(descripcion), almacen(fila, columna)") \
                         .eq("id_producto", pid) \
                         .limit(1) \
                         .execute().data or [{}]
-                    prod = prod[0] if prod else {}
+                    prod = prod_res[0] if prod_res else {}
 
                 productos.append({
                     "producto_id": pid,
@@ -230,18 +168,16 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                     "almacen_columna": (prod.get("almacen") or {}).get("columna"),
                     "cantidad_cliente": plancha.get("cantidad") or 1,
                     "stock_cantidad": prod.get("cantidad") or 0,
-                    "origen": "corte_sin_merma"
+                    "origen": "corte_sin_merma",
                 })
 
         if not productos:
-            # Intentar obtener productos desde cortes asociados al carrito
             try:
                 cortes_data = supabase.table("cortes") \
                     .select("producto_id, cantidad") \
                     .eq("carrito_id", carrito_id) \
                     .execute().data or []
 
-                # Agrupar por producto_id sumando cantidades
                 cortes_por_prod = {}
                 for corte in cortes_data:
                     pid = corte.get("producto_id")
@@ -271,7 +207,7 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                             "almacen_columna": (prod.get("almacen") or {}).get("columna"),
                             "cantidad_cliente": cortes_por_prod.get(pid, 1),
                             "stock_cantidad": prod.get("cantidad") or 0,
-                            "origen": "corte"
+                            "origen": "corte",
                         })
             except Exception:
                 pass
@@ -282,13 +218,17 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                 "solo_cortes": False,
                 "message": "El cliente no agrego productos",
                 "data": [],
-                "carrito_id": carrito_id
+                "carrito_id": carrito_id,
             }
 
-        # Determinar si todos los productos vienen de cortes
-        solo_cortes = all(p.get("origen") == "corte" for p in productos)
+        solo_cortes = all(p.get("origen") in ("corte", "corte_sin_merma") for p in productos)
 
-        return {"success": True, "data": productos, "solo_cortes": solo_cortes, "carrito_id": carrito_id}
+        return {
+            "success": True,
+            "data": productos,
+            "solo_cortes": solo_cortes,
+            "carrito_id": carrito_id,
+        }
     except Exception as exc:
         traceback.print_exc()
         return {"success": False, "message": str(exc), "data": []}
@@ -319,7 +259,7 @@ def descontar_stock_productos(items: List[Dict[str, Any]]) -> Dict[str, Any]:
                 continue
 
             actual = float(res.data[0].get("cantidad") or 0)
-            nuevo = int(max(actual - cantidad, 0))  # Convertir a int
+            nuevo = int(max(actual - cantidad, 0))
 
             supabase.table("productos") \
                 .update({"cantidad": nuevo}) \

@@ -3,12 +3,18 @@ Servicio para notificaciones desde el modulo Flutter.
 """
 from typing import Tuple, List, Any, Dict
 from app.services.supabase_client import supabase
+from app.services.venta_detalle_service import obtener_venta_ids_por_cliente
 
 
 def obtener_notificaciones_usuario(usuario_id: str, limite: int = 20, no_leidas: bool = False) -> Tuple[bool, List[Dict[str, Any]]]:
     """Obtiene notificaciones para un usuario (limitado)."""
     try:
-        query = supabase.table('notificacion').select('*').eq('id_cliente', usuario_id)
+        venta_ids = obtener_venta_ids_por_cliente(usuario_id)
+        query = supabase.table('notificacion').select('*')
+        if venta_ids:
+            query = query.in_('venta_id', venta_ids)
+        else:
+            return True, []
         if no_leidas:
             # asume campo 'leida' booleano
             query = query.eq('leida', False)
@@ -27,7 +33,10 @@ def obtener_notificaciones_usuario(usuario_id: str, limite: int = 20, no_leidas:
 def obtener_notificaciones_no_leidas_count(usuario_id: str) -> Tuple[bool, int]:
     """Cuenta las notificaciones no leídas de un usuario."""
     try:
-        res = supabase.table('notificacion').select('id_notificacion', count='exact').eq('id_cliente', usuario_id).eq('leida', False).execute()
+        venta_ids = obtener_venta_ids_por_cliente(usuario_id)
+        if not venta_ids:
+            return True, 0
+        res = supabase.table('notificacion').select('id_notificacion', count='exact').in_('venta_id', venta_ids).eq('leida', False).execute()
         count = getattr(res, 'count', None)
         if count is None:
             data = getattr(res, 'data', []) or []
@@ -51,7 +60,10 @@ def marcar_notificacion_como_leida(notificacion_id: str) -> Tuple[bool, Any]:
 def marcar_todas_como_leidas(usuario_id: str) -> Tuple[bool, Any]:
     """Marca todas las notificaciones de un usuario como leídas."""
     try:
-        res = supabase.table('notificacion').update({'leida': True}).eq('id_cliente', usuario_id).execute()
+        venta_ids = obtener_venta_ids_por_cliente(usuario_id)
+        if not venta_ids:
+            return True, None
+        res = supabase.table('notificacion').update({'leida': True}).in_('venta_id', venta_ids).execute()
         return True, res
     except Exception as e:
         print(f"[notificaciones_flutter_service] Error marcar_todas_como_leidas: {e}")

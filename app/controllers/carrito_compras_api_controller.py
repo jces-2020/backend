@@ -141,7 +141,7 @@ def confirmar_pedido():
             if cli_info and getattr(cli_info, 'data', None):
                 nombre_cli = cli_info.data[0].get('nombre')
             # Cantidad total de productos (suma de cantidades en el carrito)
-            items = supabase.table('productos_carrito').select('cantidad').eq('carrito_id', carrito_id).execute()
+            items = supabase.table('venta').select('cantidad').eq('carrito_id', carrito_id).execute()
             # NotificaciÃ³n de trabajo se crearÃ¡ solo cuando el pago estÃ© aprobado (webhook Mercado Pago)
             pass
         except Exception:
@@ -237,12 +237,13 @@ def actualizar_estado_pedido(carrito_id):
                 deleted_notifs = 0
                 try:
                     # contar items
-                    it = supabase.table('productos_carrito').select('producto_id').eq('carrito_id', carrito_id).execute()
+                    it = supabase.table('venta').select('producto_id').eq('carrito_id', carrito_id).execute()
                     deleted_items = len(getattr(it, 'data', []) or [])
                 except Exception:
                     deleted_items = 0
                 try:
-                    supabase.table('productos_carrito').delete().eq('carrito_id', carrito_id).execute()
+                    # Las líneas de venta se conservan como historial; no se borran.
+                    pass
                 except Exception:
                     pass
                 # borrar notificaciones asociadas
@@ -334,25 +335,16 @@ def auto_delete_pedido_entregado_cliente(carrito_id):
             return jsonify({'success': False, 'message': 'Token inválido'}), 401
 
         # Buscar carrito
-        cres = supabase.table('carrito_compras').select('id_carrito, cliente_id, estado').eq('id_carrito', carrito_id).limit(1).execute()
+        cres = supabase.table('carrito_compras').select('id_carrito, estado').eq('id_carrito', carrito_id).limit(1).execute()
         if not getattr(cres, 'data', None):
             return jsonify({'success': True, 'deleted': False, 'message': 'Pedido ya no existe'}), 200
 
         carrito = cres.data[0]
-        cliente_id_carrito = str(carrito.get('cliente_id') or '')
-        cliente_id_token = str(payload.get('sub') or '')
-        if cliente_id_token != cliente_id_carrito:
-            return jsonify({'success': False, 'message': 'No autorizado'}), 403
-
         estado = str(carrito.get('estado') or '').strip().lower()
         if estado not in ('entregado', 'listo'):
             return jsonify({'success': False, 'message': 'Solo se puede eliminar pedidos entregados/listos'}), 400
 
-        # Limpiar detalle del carrito
-        try:
-            supabase.table('productos_carrito').delete().eq('carrito_id', carrito_id).execute()
-        except Exception:
-            pass
+        # El detalle ya se conserva en venta; no se borra historial.
 
         # Limpiar notificaciones asociadas por carrito_id en descripcion JSON o texto
         deleted_notifs = 0
@@ -426,7 +418,7 @@ def limpiar_carritos_vacios():
             estado = carrito.get('estado', '').strip()
             
             # Verificar si tiene productos
-            productos = supabase.table('productos_carrito').select('producto_id').eq('carrito_id', cid).execute()
+            productos = supabase.table('venta').select('producto_id').eq('carrito_id', cid).execute()
             tiene_productos = len(getattr(productos, 'data', []) or []) > 0
             
             # Eliminar si:
@@ -444,8 +436,7 @@ def limpiar_carritos_vacios():
             
             if debe_eliminar:
                 try:
-                    # Primero eliminar productos_carrito (FK)
-                    supabase.table('productos_carrito').delete().eq('carrito_id', cid).execute()
+                    # El historial de venta no se borra.
                     # Luego eliminar carrito
                     supabase.table('carrito_compras').delete().eq('id_carrito', cid).execute()
                     eliminados.append({'carrito_id': cid, 'razon': razon})

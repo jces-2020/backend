@@ -182,7 +182,7 @@ def _descontar_stock_productos(stock_deltas, stock_map):
             "despues": nuevo,
         })
 
-    # — Notificar a Flutter vía Pusher (no bloquea si falla) —
+    # Notificar a Flutter via Pusher (no bloquea si falla)
     try:
         from app.services.pusher_service import notificar_stock_actualizado
         pids = [d["producto_id"] for d in descuentos if d["producto_id"]]
@@ -479,21 +479,21 @@ def crear_preferencia():
         if str(carrito_id).startswith('temp_'):
             items, total = _build_wallet_items_from_request(items_payload)
         else:
-            productos_carrito = supabase.table("productos_carrito") \
-                .select("producto_id, cantidad") \
+            ventas_carrito = supabase.table("venta") \
+                .select("producto_id, cantidad, monto") \
                 .eq("carrito_id", carrito_id) \
                 .execute().data or []
 
 
 
 
-            if not productos_carrito:
+            if not ventas_carrito:
                 return jsonify({"success": False, "message": "Carrito vacio"}), 400
 
 
 
 
-            producto_ids = [p["producto_id"] for p in productos_carrito]
+            producto_ids = [p["producto_id"] for p in ventas_carrito if p.get("producto_id")]
 
 
 
@@ -513,7 +513,7 @@ def crear_preferencia():
 
 
 
-            for pc in productos_carrito:
+            for pc in ventas_carrito:
                 prod = productos_map.get(pc["producto_id"])
                 if not prod:
                     continue
@@ -521,9 +521,9 @@ def crear_preferencia():
 
 
 
-                cantidad = int(pc["cantidad"])
+                cantidad = int(pc.get("cantidad") or 0)
                 precio = float(prod["precio_unitario"])
-                subtotal = cantidad * precio
+                subtotal = float(pc.get("monto") or (cantidad * precio))
                 total += subtotal
 
 
@@ -736,7 +736,7 @@ def confirmar_compra():
     """
     Despues de que el pago es exitoso, este endpoint:
     1. Usa el carrito_id existente
-    2. Guarda productos PLANCHA en productos_carrito
+    2. Guarda productos PLANCHA en venta
     3. Guarda productos CORTE en tabla cortes
     4. Crea notificacion de entrega
    
@@ -974,7 +974,7 @@ def confirmar_compra():
 
 
 
-        # 3. Insertar PLANCHAS en productos_carrito (agrupar por producto_id)
+        # 3. Insertar PLANCHAS en venta (agrupar por producto_id)
         if productos_plancha:
             try:
                 # Agrupar por producto_id para sumar cantidades si hay duplicados
@@ -989,14 +989,37 @@ def confirmar_compra():
                
                 productos_plancha_final = list(productos_agrupados.values())
                 print(f"[CONFIRMAR_COMPRA] Insertando {len(productos_plancha_final)} productos plancha unicos")
-               
-                supabase.table("productos_carrito").insert(productos_plancha_final).execute()
-                print(f"[CONFIRMAR_COMPRA] OK Productos plancha guardados")
+
+                ventas_payload = []
+                for pp in productos_plancha_final:
+                    prod_id = pp["producto_id"]
+                    cantidad = int(pp.get("cantidad") or 1)
+                    prod_info = supabase.table("productos") \
+                        .select("precio_unitario") \
+                        .eq("id_producto", prod_id) \
+                        .limit(1) \
+                        .execute()
+                    precio = 0.0
+                    if prod_info and prod_info.data:
+                        precio = float(prod_info.data[0].get("precio_unitario", 0) or 0)
+
+                    ventas_payload.append({
+                        "cliente_id": cliente_id,
+                        "producto_id": prod_id,
+                        "carrito_id": carrito_id,
+                        "cantidad": cantidad,
+                        "monto": round(precio * cantidad, 2),
+                        "fecha_venta": date.today().isoformat(),
+                    })
+
+                if ventas_payload:
+                    supabase.table("venta").insert(ventas_payload).execute()
+                print(f"[CONFIRMAR_COMPRA] OK Productos plancha guardados en venta")
             except Exception as e:
                 print(f"[CONFIRMAR_COMPRA] ERROR guardando productos plancha: {str(e)}")
                 return jsonify({
                     "success": False,
-                    "message": f"Error guardando productos plancha: {str(e)}",
+                    "message": f"Error guardando productos plancha en venta: {str(e)}",
                     "carrito_id": carrito_id
                 }), 500
 

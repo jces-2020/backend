@@ -14,8 +14,7 @@ def finalizar_entrega_completa(notificacion_id: str, cortes_data: Dict[str, Any]
     2. Marca carrito como entregado
     3. Elimina notificación
     
-    NOTA: Los productos ya fueron confirmados y eliminados de productos_carrito
-    en el endpoint /api/entrega/productos/confirmar
+    NOTA: Los productos ya fueron confirmados y el historial queda en venta.
     """
     try:
         if not notificacion_id:

@@ -103,6 +103,71 @@ def _descontar_stock_productos(productos_agrupados: Dict[str, float], cortes_pay
         except Exception:
             continue
 
+
+def _guardar_lineas_venta(
+    productos_agrupados: Dict[str, float],
+    cortes_payload: List[dict],
+    carrito_id: str,
+    cliente_id: str,
+    metodo_pago: str,
+) -> float:
+    """Guarda líneas de venta en la tabla venta y retorna el total calculado."""
+    total_venta = 0.0
+    lineas = []
+
+    for pid, cantidad in (productos_agrupados or {}).items():
+        prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", pid).limit(1).execute()
+        if not prod_info.data:
+            continue
+        precio = float(prod_info.data[0].get("precio_unitario", 0) or 0)
+        monto = round(precio * float(cantidad or 0), 2)
+        total_venta += monto
+        lineas.append({
+            "cliente_id": cliente_id,
+            "producto_id": pid,
+            "carrito_id": carrito_id,
+            "cantidad": float(cantidad or 0),
+            "monto": monto,
+            "metodo": metodo_pago,
+            "fecha_venta": time.strftime("%Y-%m-%d"),
+        })
+
+    for corte in (cortes_payload or []):
+        pid_corte = str(corte.get("producto_id") or "").strip()
+        if not pid_corte:
+            continue
+        prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", pid_corte).limit(1).execute()
+        if not prod_info.data:
+            continue
+        precio = float(prod_info.data[0].get("precio_unitario", 0) or 0)
+        ancho_cm = float(corte.get("ancho_cm") or 0)
+        alto_cm = float(corte.get("alto_cm") or 0)
+        cantidad = float(corte.get("cantidad") or 1)
+        categoria = str(corte.get("_categoria") or "")
+        if "ALUMIN" in categoria:
+            largo_cm = ancho_cm if ancho_cm > 0 else alto_cm
+            monto = (((largo_cm / 100.0) * precio) + 10.0) * cantidad
+        elif ancho_cm > 0 and alto_cm > 0:
+            monto = (((ancho_cm * alto_cm / 10000.0) * precio) + 10.0) * cantidad
+        else:
+            monto = precio * cantidad
+        monto = round(monto, 2)
+        total_venta += monto
+        lineas.append({
+            "cliente_id": cliente_id,
+            "producto_id": pid_corte,
+            "carrito_id": carrito_id,
+            "cantidad": cantidad,
+            "monto": monto,
+            "metodo": metodo_pago,
+            "fecha_venta": time.strftime("%Y-%m-%d"),
+        })
+
+    if lineas:
+        supabase.table("venta").insert(lineas).execute()
+
+    return round(total_venta, 2)
+
     for corte in (cortes_payload or []):
         pid = str(corte.get("producto_id") or "").strip()
         if not pid:
@@ -192,7 +257,7 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             return False
         id_carrito = carrito_res.data[0]["id_carrito"]
         
-        # 2. Guardar productos en productos_carrito
+        # 2. Consolidar productos para guardarlos luego en venta
         # Consolidar por producto_id para evitar conflicto de PK compuesta
         productos_agrupados = {}
         for p in productos:
@@ -204,17 +269,6 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 cantidad = 1
             productos_agrupados[pid] = float(productos_agrupados.get(pid, 0)) + cantidad
 
-        productos_payload = [
-            {
-                "producto_id": pid,
-                "carrito_id": id_carrito,
-                "cantidad": cant
-            }
-            for pid, cant in productos_agrupados.items()
-        ]
-        if productos_payload:
-            supabase.table("productos_carrito").insert(productos_payload).execute()
-        
         # 3. Guardar cortes en cortes
         cortes_payload = []
         for c in cortes:
@@ -268,47 +322,18 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
         }
         supabase.table("notificacion").insert(notif_payload).execute()
         
-        # 5. Calcular total y registrar venta
+        # 5. Guardar líneas de venta con el detalle real
         try:
-            from services.venta_service import registrar_venta
-            
-            total_venta = 0.0
-            
-            # Sumar productos
-            for pid, cantidad in productos_agrupados.items():
-                prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", pid).limit(1).execute()
-                if prod_info and prod_info.data:
-                    precio = float(prod_info.data[0].get("precio_unitario", 0))
-                    total_venta += precio * cantidad
-            
-            # Sumar cortes (precio por area: igual formula que frontend)
-            COSTO_CORTE = 10.0
-            for corte in cortes_payload:
-                pid_corte = corte["producto_id"]
-                cantidad_corte = corte["cantidad"]
-                ancho_cm = corte["ancho_cm"]
-                alto_cm = corte["alto_cm"]
-                categoria_corte = corte.get("_categoria", "")
-
-                prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", pid_corte).limit(1).execute()
-                if prod_info and prod_info.data:
-                    precio = float(prod_info.data[0].get("precio_unitario", 0))
-                    if "ALUMIN" in categoria_corte:
-                        largo_cm = ancho_cm if ancho_cm > 0 else alto_cm
-                        precio_pieza = ((largo_cm / 100.0) * precio) + COSTO_CORTE
-                    elif ancho_cm > 0 and alto_cm > 0:
-                        precio_pieza = ((ancho_cm * alto_cm / 10000.0) * precio) + COSTO_CORTE
-                    else:
-                        precio_pieza = precio
-                    total_venta += precio_pieza * cantidad_corte
-
+            total_venta = _guardar_lineas_venta(
+                productos_agrupados=productos_agrupados,
+                cortes_payload=cortes_payload,
+                carrito_id=id_carrito,
+                cliente_id=cliente["id_cliente"],
+                metodo_pago=metodo_normalizado,
+            )
             print(f"[COMPRA_SERVICE] Total venta: S/ {total_venta:.2f}, Metodo: {metodo_normalizado}")
-            
-            if total_venta > 0:
-                registrar_venta(total=total_venta, metodo=metodo_normalizado, caja_id=None)
-                print(f"[COMPRA_SERVICE] [OK] Venta registrada")
         except Exception as e:
-            print(f"[COMPRA_SERVICE] [!] Error registrando venta: {str(e)}")
+            print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
 
         return {"ok": True, "cuenta_temporal": False}
     else:
@@ -386,7 +411,7 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
         if not carrito_res.data:
             return False
         id_carrito = carrito_res.data[0]["id_carrito"]
-        # 2. Guardar productos en productos_carrito
+        # 2. Consolidar productos para guardarlos luego en venta
         # Consolidar por producto_id para evitar conflicto de PK compuesta
         productos_agrupados = {}
         for p in productos:
@@ -398,16 +423,6 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 cantidad = 1
             productos_agrupados[pid] = float(productos_agrupados.get(pid, 0)) + cantidad
 
-        productos_payload = [
-            {
-                "producto_id": pid,
-                "carrito_id": id_carrito,
-                "cantidad": cant
-            }
-            for pid, cant in productos_agrupados.items()
-        ]
-        if productos_payload:
-            supabase.table("productos_carrito").insert(productos_payload).execute()
         # 3. Guardar cortes en cortes (nombre especial)
         cortes_payload = []
         for c in cortes:
@@ -461,45 +476,16 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
         
         # 5. Calcular total y registrar venta
         try:
-            from services.venta_service import registrar_venta
-            
-            total_venta = 0.0
-            
-            # Sumar productos
-            for pid, cantidad in productos_agrupados.items():
-                prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", pid).limit(1).execute()
-                if prod_info and prod_info.data:
-                    precio = float(prod_info.data[0].get("precio_unitario", 0))
-                    total_venta += precio * cantidad
-            
-            # Sumar cortes (precio por area: igual formula que frontend)
-            COSTO_CORTE = 10.0
-            for corte in cortes_payload:
-                pid_corte = corte["producto_id"]
-                cantidad_corte = corte["cantidad"]
-                ancho_cm = corte["ancho_cm"]
-                alto_cm = corte["alto_cm"]
-                categoria_corte = corte.get("_categoria", "")
-
-                prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", pid_corte).limit(1).execute()
-                if prod_info and prod_info.data:
-                    precio = float(prod_info.data[0].get("precio_unitario", 0))
-                    if "ALUMIN" in categoria_corte:
-                        largo_cm = ancho_cm if ancho_cm > 0 else alto_cm
-                        precio_pieza = ((largo_cm / 100.0) * precio) + COSTO_CORTE
-                    elif ancho_cm > 0 and alto_cm > 0:
-                        precio_pieza = ((ancho_cm * alto_cm / 10000.0) * precio) + COSTO_CORTE
-                    else:
-                        precio_pieza = precio
-                    total_venta += precio_pieza * cantidad_corte
-
+            total_venta = _guardar_lineas_venta(
+                productos_agrupados=productos_agrupados,
+                cortes_payload=cortes_payload,
+                carrito_id=id_carrito,
+                cliente_id=cliente_temp["id_cliente"],
+                metodo_pago=metodo_normalizado,
+            )
             print(f"[COMPRA_SERVICE] Total venta: S/ {total_venta:.2f}, Metodo: {metodo_normalizado}")
-            
-            if total_venta > 0:
-                registrar_venta(total=total_venta, metodo=metodo_normalizado, caja_id=None)
-                print(f"[COMPRA_SERVICE] [OK] Venta registrada")
         except Exception as e:
-            print(f"[COMPRA_SERVICE] [!] Error registrando venta: {str(e)}")
+            print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
 
         return {
             "ok": True,
