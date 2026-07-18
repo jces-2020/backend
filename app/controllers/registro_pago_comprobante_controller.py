@@ -108,9 +108,23 @@ def listar_comprobantes_cliente():
         if fecha_inicio and fecha_fin and fecha_inicio > fecha_fin:
             return jsonify({"success": False, "message": "fecha_inicio no puede ser mayor a fecha_fin"}), 400
 
+        ventas_q = supabase.table("venta").select("registro_pago_id").eq("cliente_id", cliente_id)
+        ventas_res = ventas_q.execute()
+        registro_ids = sorted({
+            row.get("registro_pago_id")
+            for row in (ventas_res.data or [])
+            if row.get("registro_pago_id")
+        })
+
+        if not registro_ids:
+            return jsonify({
+                "success": True,
+                "comprobantes": []
+            }), 200
+
         consulta = supabase.table("registro_pago").select(
-            "id_registro, fecha, monto, documento"
-        ).eq("cliente_id", cliente_id)
+            "id_registro, fecha, total, documento"
+        ).in_("id_registro", registro_ids)
 
         if fecha_inicio:
             consulta = consulta.gte("fecha", fecha_inicio)
@@ -125,7 +139,7 @@ def listar_comprobantes_cliente():
         for reg in resultado.data or []:
             fecha_raw = str(reg.get("fecha") or "")
             try:
-                monto_key = round(float(reg.get("monto") or 0), 2)
+                monto_key = round(float(reg.get("total") or 0), 2)
             except (TypeError, ValueError):
                 monto_key = 0.0
             firma = f"{fecha_raw}|{monto_key:.2f}"
@@ -155,7 +169,7 @@ def listar_comprobantes_cliente():
                 "id_registro": reg.get("id_registro"),
                 "tipo": tipo,
                 "fecha": reg.get("fecha"),
-                "monto": reg.get("monto"),
+                "monto": reg.get("total"),
                 "documento_url": documento_url
             })
 
@@ -185,14 +199,17 @@ def eliminar_comprobante_cliente(id_registro):
             return jsonify({"success": False, "message": "cliente_id no encontrado en token"}), 401
 
         registro_res = supabase.table("registro_pago").select(
-            "id_registro, cliente_id, documento"
+            "id_registro, documento"
         ).eq("id_registro", id_registro).limit(1).execute()
 
         if not registro_res.data:
             return jsonify({"success": False, "message": "Comprobante no encontrado"}), 404
 
         registro = registro_res.data[0]
-        if registro.get("cliente_id") != cliente_id:
+
+        # Validar pertenencia del registro de pago al cliente vía tabla venta
+        venta_owner = supabase.table("venta").select("id_venta").eq("registro_pago_id", id_registro).eq("cliente_id", cliente_id).limit(1).execute()
+        if not (venta_owner.data or []):
             return jsonify({"success": False, "message": "No autorizado para eliminar este comprobante"}), 403
 
         documento_url = registro.get("documento") or ""

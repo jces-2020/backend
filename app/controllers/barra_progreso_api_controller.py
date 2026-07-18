@@ -319,10 +319,33 @@ def descontar_stock_servicio():
 def barra_progreso_servicio(cliente_id):
     """Devuelve barra de progreso para servicios del cliente."""
     try:
+        ventas_res = supabase.table('venta') \
+            .select('carrito_id, fecha_venta') \
+            .eq('cliente_id', cliente_id) \
+            .order('fecha_venta', desc=True) \
+            .execute()
+
+        carrito_ids = []
+        seen = set()
+        for row in (ventas_res.data or []):
+            cid = row.get('carrito_id')
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            carrito_ids.append(cid)
+
+        if not carrito_ids:
+            return jsonify({
+                'success': True,
+                'progreso': 0,
+                'estado': None,
+                'mostrar_barra': False,
+                'items': []
+            }), 200
+
         servicio_res = supabase.table('carrito_compras') \
             .select('*') \
-            .eq('cliente_id', cliente_id) \
-            .ilike('nombre', '%servicio%') \
+            .in_('id_carrito', carrito_ids) \
             .execute()
 
         servicios = servicio_res.data or []
@@ -407,10 +430,35 @@ def barra_progreso(cliente_id):
         _dbg(f"\n{'='*80}")
         _dbg(f"[DEBUG barra_progreso] Llamado para cliente_id: {cliente_id}")
         
-        # Buscar todos los carritos del cliente
+        # Buscar carritos del cliente desde la tabla venta (modelo nuevo)
+        ventas_res = supabase.table('venta') \
+            .select('carrito_id, fecha_venta') \
+            .eq('cliente_id', cliente_id) \
+            .order('fecha_venta', desc=True) \
+            .execute()
+
+        carrito_ids = []
+        seen = set()
+        for row in (ventas_res.data or []):
+            cid = row.get('carrito_id')
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            carrito_ids.append(cid)
+
+        if not carrito_ids:
+            _dbg("[DEBUG barra_progreso] No hay ventas con carrito para este cliente")
+            return jsonify({
+                'success': True,
+                'progreso': 0,
+                'estado': None,
+                'mostrar_barra': False,
+                'items': []
+            })
+
         carrito_res = supabase.table('carrito_compras') \
             .select('*') \
-            .eq('cliente_id', cliente_id) \
+            .in_('id_carrito', carrito_ids) \
             .execute()
         
         _dbg(f"[DEBUG barra_progreso] Carritos encontrados: {len(carrito_res.data) if carrito_res.data else 0}")
