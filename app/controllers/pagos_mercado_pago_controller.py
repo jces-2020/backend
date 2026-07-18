@@ -20,6 +20,11 @@ import uuid
 pagos_mp_bp = Blueprint("pagos_mp", __name__)
 bp = pagos_mp_bp  # alias para auto-registro del factory
 
+# IDs fijos de negocio para el nuevo flujo
+DEFAULT_CARRITO_ID = "2ca0f029-e8b0-4f8a-8e5e-e2ac279f957d"
+DEFAULT_TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
+DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"
+
 
 
 
@@ -310,6 +315,30 @@ def _build_wallet_items_from_request(raw_items):
 
 
     return items, round(total, 2)
+
+
+def _obtener_o_crear_caja_activa() -> str | None:
+    """Retorna el id_caja del día actual; si no existe, lo crea."""
+    try:
+        fecha_hoy = date.today().isoformat()
+        caja_res = supabase.table("caja") \
+            .select("id_caja") \
+            .eq("fecha", fecha_hoy) \
+            .limit(1) \
+            .execute()
+        if caja_res.data:
+            return caja_res.data[0].get("id_caja")
+
+        nueva = supabase.table("caja").insert({
+            "fecha": fecha_hoy,
+            "turno": "diurno",
+            "subtotal": 0,
+        }).execute()
+        row = (nueva.data or [None])[0]
+        return (row or {}).get("id_caja")
+    except Exception as exc:
+        print(f"[CONFIRMAR_COMPRA] WARN No se pudo resolver caja activa: {exc}")
+        return None
 
 
 
@@ -832,13 +861,47 @@ def confirmar_compra():
         if cliente_id != cliente_id_token:
             return jsonify({"success": False, "message": "No autorizado"}), 403
 
+        # Determinar metodo de pago desde el payload para guardarlo en venta
+        metodo_pago_raw = str(data.get("metodo_pago") or "").strip().lower()
+        payment_method_id = str(data.get("payment_method_id") or data.get("metodo_pago_id") or "").strip().lower()
+        payment_id_norm = str(payment_id or "").strip().lower()
+        metodo_pago = "por tarjeta"
+        if (
+            "yape" in payment_method_id or
+            "yape" in metodo_pago_raw or
+            "yape" in payment_id_norm
+        ):
+            metodo_pago = "por yape"
+        elif (
+            "pagoefectivo" in payment_method_id or
+            "cash" in payment_method_id or
+            "efectivo" in payment_method_id or
+            "contado" in payment_method_id or
+            "atm" in payment_method_id or
+            "efectivo" in metodo_pago_raw or
+            "contado" in metodo_pago_raw or
+            "manual" in payment_id_norm
+        ):
+            metodo_pago = "al contado"
+        elif (
+            "debit" in payment_method_id or
+            "credit" in payment_method_id or
+            "visa" in payment_method_id or
+            "master" in payment_method_id or
+            "amex" in payment_method_id or
+            "card" in payment_method_id or
+            "tarjeta" in metodo_pago_raw
+        ):
+            metodo_pago = "por tarjeta"
+        elif metodo_pago_raw:
+            metodo_pago = metodo_pago_raw
 
 
 
-        # Si carrito_id es temporal (comienza con 'temp_'), generar UUID real
-        if str(carrito_id).startswith('temp_'):
-            carrito_id = str(uuid.uuid4())
-            print(f"[CONFIRMAR_COMPRA] Convirtiendo carrito temporal a UUID: {carrito_id}")
+
+        # Regla de negocio: usar carrito fijo para la barra de progreso cliente.
+        carrito_id = DEFAULT_CARRITO_ID
+        print(f"[CONFIRMAR_COMPRA] Usando carrito fijo de progreso: {carrito_id}")
 
 
 
@@ -856,8 +919,8 @@ def confirmar_compra():
                 print(f"[CONFIRMAR_COMPRA] Creando carrito: {carrito_id} para cliente: {cliente_id}")
                 carrito_data = {
                     "id_carrito": carrito_id,
-                    "cliente_id": cliente_id,
-                    "estado": "inicio"
+                    "estado": "inicio",
+                    "nombre": "progreso_cliente"
                 }
                 carrito_insert = supabase.table("carrito_compras").insert(carrito_data).execute()
                 print(f"[CONFIRMAR_COMPRA] OK Carrito creado exitosamente")
@@ -882,6 +945,7 @@ def confirmar_compra():
         # 2. Separar productos en PLANCHA y CORTE
         productos_plancha = []
         cortes_personalizados = []
+        ventas_creadas = []
         catalogo_productos = _build_productos_catalogo(productos)
 
 
@@ -1009,11 +1073,14 @@ def confirmar_compra():
                         "carrito_id": carrito_id,
                         "cantidad": cantidad,
                         "monto": round(precio * cantidad, 2),
+                        "metodo": metodo_pago,
+                        "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
                         "fecha_venta": date.today().isoformat(),
                     })
 
                 if ventas_payload:
-                    supabase.table("venta").insert(ventas_payload).execute()
+                    insert_res = supabase.table("venta").insert(ventas_payload).execute()
+                    ventas_creadas.extend(insert_res.data or [])
                 print(f"[CONFIRMAR_COMPRA] OK Productos plancha guardados en venta")
             except Exception as e:
                 print(f"[CONFIRMAR_COMPRA] ERROR guardando productos plancha: {str(e)}")
@@ -1026,11 +1093,56 @@ def confirmar_compra():
 
 
 
-        # 4. Insertar CORTES en tabla cortes
+        # 4. Insertar CORTES vinculados a venta
         if cortes_personalizados:
             try:
                 print(f"[CONFIRMAR_COMPRA] Insertando {len(cortes_personalizados)} cortes")
-                supabase.table("cortes").insert(cortes_personalizados).execute()
+                cortes_payload_db = []
+                for corte in cortes_personalizados:
+                    prod_id = corte.get("producto_id")
+                    if not prod_id:
+                        continue
+
+                    producto_base = catalogo_productos.get(prod_id)
+                    if not producto_base:
+                        prod_info = supabase.table("productos") \
+                            .select("*") \
+                            .eq("id_producto", prod_id) \
+                            .limit(1) \
+                            .execute()
+                        if prod_info and prod_info.data:
+                            producto_base = prod_info.data[0]
+                            catalogo_productos[prod_id] = producto_base
+
+                    precio = float((producto_base or {}).get("precio_unitario", 0) or 0)
+                    monto_corte = calcular_total_corte(corte, precio, es_material_aluminio(producto_base or {}))
+
+                    venta_payload_corte = {
+                        "cliente_id": cliente_id,
+                        "producto_id": prod_id,
+                        "carrito_id": carrito_id,
+                        "cantidad": 1,
+                        "monto": round(float(monto_corte or 0), 2),
+                        "metodo": metodo_pago,
+                        "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
+                        "fecha_venta": date.today().isoformat(),
+                    }
+                    venta_res = supabase.table("venta").insert(venta_payload_corte).execute()
+                    venta_row = (venta_res.data or [None])[0]
+                    if not venta_row:
+                        continue
+
+                    ventas_creadas.append(venta_row)
+                    cortes_payload_db.append({
+                        "venta_id": venta_row.get("id_venta"),
+                        "ancho_cm": float(corte.get("ancho_cm") or 0),
+                        "alto_cm": float(corte.get("alto_cm") or 0),
+                        "cantidad": int(corte.get("cantidad") or 1),
+                        "estado": "pendiente",
+                    })
+
+                if cortes_payload_db:
+                    supabase.table("cortes").insert(cortes_payload_db).execute()
                 print(f"[CONFIRMAR_COMPRA] OK Cortes guardados")
             except Exception as e:
                 print(f"[CONFIRMAR_COMPRA] ERROR guardando cortes: {str(e)}")
@@ -1043,41 +1155,10 @@ def confirmar_compra():
 
 
 
-        # 5. Calcular total de la venta
+        # 5. Calcular total de la venta desde registros creados en venta
         total_venta = 0.0
         try:
-            # Obtener precios de productos para calcular total
-            for prod in productos_plancha:
-                prod_id = prod["producto_id"]
-                cantidad = prod["cantidad"]
-               
-                # Consultar precio del producto
-                prod_info = supabase.table("productos").select("precio_unitario").eq("id_producto", prod_id).limit(1).execute()
-                if prod_info and prod_info.data:
-                    precio = float(prod_info.data[0].get("precio_unitario", 0))
-                    total_venta += precio * cantidad
-           
-            # Para cortes, usar el calculo real por material
-            for corte in cortes_personalizados:
-                prod_id = corte["producto_id"]
-                producto_base = catalogo_productos.get(prod_id)
-
-
-
-
-                if not producto_base:
-                    prod_info = supabase.table("productos").select("*").eq("id_producto", prod_id).limit(1).execute()
-                    if prod_info and prod_info.data:
-                        producto_base = prod_info.data[0]
-                        catalogo_productos[prod_id] = producto_base
-
-
-
-
-                if producto_base:
-                    precio = float(producto_base.get("precio_unitario", 0) or 0)
-                    total_venta += calcular_total_corte(corte, precio, es_material_aluminio(producto_base))
-           
+            total_venta = sum(float(v.get("monto") or 0) for v in (ventas_creadas or []))
             print(f"[CONFIRMAR_COMPRA] Total calculado: S/ {total_venta:.2f}")
         except Exception as e:
             print(f"[CONFIRMAR_COMPRA] WARN Error calculando total: {str(e)}")
@@ -1086,75 +1167,36 @@ def confirmar_compra():
 
 
 
-        # 6. Determinar metodo de pago y registrar venta
+        # 6. Registrar comprobante de pago y enlazarlo a las ventas creadas
         try:
-            from app.services.venta_service import registrar_venta
-           
-            # Obtener metodo de pago del data (puede venir del frontend) y normalizarlo.
-            metodo_pago_raw = str(data.get("metodo_pago") or "").strip().lower()
-            payment_method_id = str(data.get("payment_method_id") or data.get("metodo_pago_id") or "").strip().lower()
-            payment_id_norm = str(payment_id or "").strip().lower()
-
-            metodo_pago = "por tarjeta"
-
-            # Prioridad 1: detectar Yape por id de metodo, texto o payment_id.
-            if (
-                "yape" in payment_method_id or
-                "yape" in metodo_pago_raw or
-                "yape" in payment_id_norm
-            ):
-                metodo_pago = "por yape"
-            # Prioridad 2: detectar pagos en efectivo/contado.
-            elif (
-                "pagoefectivo" in payment_method_id or
-                "cash" in payment_method_id or
-                "efectivo" in payment_method_id or
-                "contado" in payment_method_id or
-                "atm" in payment_method_id or
-                "efectivo" in metodo_pago_raw or
-                "contado" in metodo_pago_raw or
-                "manual" in payment_id_norm
-            ):
-                metodo_pago = "al contado"
-            # Prioridad 3: tarjeta.
-            elif (
-                "debit" in payment_method_id or
-                "credit" in payment_method_id or
-                "visa" in payment_method_id or
-                "master" in payment_method_id or
-                "amex" in payment_method_id or
-                "card" in payment_method_id or
-                "tarjeta" in metodo_pago_raw
-            ):
-                metodo_pago = "por tarjeta"
-            elif metodo_pago_raw:
-                # Si no coincide con ninguna regla, usar el valor enviado.
-                metodo_pago = metodo_pago_raw
-           
-            print(f"[CONFIRMAR_COMPRA] Registrando venta: metodo={metodo_pago}, total={total_venta}")
-           
             registro_pago_id = None
 
-            if total_venta > 0:
-                venta_ok = registrar_venta(total=total_venta, metodo=metodo_pago, caja_id=None)
-                if venta_ok:
-                    print(f"[CONFIRMAR_COMPRA] OK Venta registrada exitosamente")
+            if total_venta > 0 and ventas_creadas:
+                caja_id_activa = _obtener_o_crear_caja_activa()
+                registro_payload = {
+                    "fecha": date.today().isoformat(),
+                    "total": total_venta,
+                    "documento": None,
+                    "caja_id": caja_id_activa,
+                }
+                registro_res = supabase.table("registro_pago").insert(registro_payload).execute()
+                registro_row = (registro_res.data or [None])[0]
+                if registro_row:
+                    registro_pago_id = registro_row.get("id_registro")
+                    venta_ids = [v.get("id_venta") for v in ventas_creadas if v.get("id_venta")]
+                    if venta_ids:
+                        supabase.table("venta") \
+                            .update({"registro_pago_id": registro_pago_id}) \
+                            .in_("id_venta", venta_ids) \
+                            .execute()
+
+                    # Sumar compra al monto de empresa usando el total del registro de pago.
                     try:
-                        registro_payload = {
-                            "fecha": date.today().isoformat(),
-                            "monto": total_venta,
-                            "cliente_id": cliente_id,
-                            "documento": None,
-                        }
-                        registro_res = supabase.table("registro_pago").insert(registro_payload).execute()
-                        registro_row = (registro_res.data or [None])[0]
-                        if registro_row:
-                            registro_pago_id = registro_row.get("id_registro")
-                        print(f"[CONFIRMAR_COMPRA] OK Registro de pago creado")
-                    except Exception as e:
-                        print(f"[CONFIRMAR_COMPRA] WARN No se pudo crear registro_pago: {str(e)}")
-                else:
-                    print(f"[CONFIRMAR_COMPRA] WARN Error registrando venta")
+                        from app.services.pago_balance_service import sumar_monto_empresa
+                        sumar_monto_empresa(float(total_venta or 0))
+                    except Exception as exc_saldo:
+                        print(f"[CONFIRMAR_COMPRA] WARN No se pudo actualizar monto_empresa: {exc_saldo}")
+                print(f"[CONFIRMAR_COMPRA] OK Registro de pago creado: {registro_pago_id}")
         except Exception as e:
             # Log pero no fallar el flujo principal
             print(f"[CONFIRMAR_COMPRA] WARN Error registrando venta: {str(e)}")
@@ -1164,11 +1206,6 @@ def confirmar_compra():
 
         # 7. Crear notificacion de entrega
         try:
-            from app.services.notificacion_entrega_service import crear_notificacion_entrega
-
-
-
-
             # Obtener nombre del cliente
             cli = supabase.table("cliente").select("nombre").eq("id_cliente", cliente_id).limit(1).execute()
             nombre_cliente = None
@@ -1186,23 +1223,17 @@ def confirmar_compra():
 
 
             descripcion = f"Pago {payment_id} - items: {total_items}"
-
-
-
-
-            notif_result = crear_notificacion_entrega(
-                cliente_id=cliente_id,
-                carrito_id=carrito_id,
-                nombre_cliente=nombre_cliente or "Cliente",
-                cantidad_items=total_items,
-                descripcion=descripcion
-            )
-
-
-
-
-            if not notif_result.get("success"):
-                print(f"[CONFIRMAR_COMPRA] WARN Notificacion no creada: {notif_result.get('error')}")
+            primera_venta_id = (ventas_creadas[0].get("id_venta") if ventas_creadas else None)
+            notif_payload = {
+                "nombre": nombre_cliente or "Cliente",
+                "descripcion": f"{descripcion} (Carrito: {carrito_id})",
+                "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID,
+                "tipo": "entrega",
+                "venta_id": primera_venta_id,
+            }
+            notif_res = supabase.table("notificacion").insert(notif_payload).execute()
+            if not (notif_res.data or []):
+                print("[CONFIRMAR_COMPRA] WARN Notificacion no creada")
         except Exception as e:
             # Log pero no fallar
             print(f"[CONFIRMAR_COMPRA] Error creando notificacion: {str(e)}")
