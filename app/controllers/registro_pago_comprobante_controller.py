@@ -131,32 +131,8 @@ def listar_comprobantes_cliente():
 
         resultado = consulta.order("fecha", desc=True).execute()
 
-        # Consolidar posibles duplicados (uno sin documento y otro con PDF)
-        # para el mismo cliente/fecha/monto, priorizando el registro con documento.
-        consolidado = {}
-        for reg in resultado.data or []:
-            fecha_raw = str(reg.get("fecha") or "")
-            monto_reg = reg.get("total")
-            if monto_reg in (None, ""):
-                monto_reg = reg.get("monto")
-            try:
-                monto_key = round(float(monto_reg or 0), 2)
-            except (TypeError, ValueError):
-                monto_key = 0.0
-            firma = f"{fecha_raw}|{monto_key:.2f}"
-
-            actual = consolidado.get(firma)
-            if not actual:
-                consolidado[firma] = reg
-                continue
-
-            doc_actual = str(actual.get("documento") or actual.get("documento_url") or actual.get("pdf") or actual.get("pdf_url") or "").strip()
-            doc_nuevo = str(reg.get("documento") or reg.get("documento_url") or reg.get("pdf") or reg.get("pdf_url") or "").strip()
-            if doc_nuevo and not doc_actual:
-                consolidado[firma] = reg
-
         comprobantes = []
-        for reg in consolidado.values():
+        for reg in (resultado.data or []):
             documento_url = (
                 reg.get("documento")
                 or reg.get("documento_url")

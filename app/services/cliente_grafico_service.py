@@ -116,7 +116,7 @@ class ClienteGraficoService:
             return []
 
         response = supabase.table("registro_pago").select(
-            "fecha,total,monto"
+            "fecha,total"
         ).in_("id_registro", registro_ids).gte(
             "fecha", fecha_inicio.date().isoformat()
         ).lte(
@@ -127,7 +127,7 @@ class ClienteGraficoService:
         for row in response.data or []:
             pagos.append({
                 "fecha": row.get("fecha"),
-                "monto": row.get("total") if row.get("total") is not None else row.get("monto"),
+                "monto": row.get("total"),
             })
         return pagos
 

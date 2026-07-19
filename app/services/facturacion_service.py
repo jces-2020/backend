@@ -1,6 +1,6 @@
 import requests
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 
@@ -82,8 +82,24 @@ class FacturacionService:
             # CORRELATIVO (SUNAT: max 8 digitos)
             correlativo = f"{int(datetime.now().timestamp()) % 100000000:08d}"
 
-            # FECHA EMISIÓN
-            fecha_emision = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-05:00")
+            # FECHA EMISION en zona horaria Peru (UTC-5)
+            fecha_emision = datetime.now(timezone.utc).astimezone(
+                timezone(timedelta(hours=-5))
+            ).isoformat(timespec="seconds")
+
+            direccion_cliente = (
+                str(
+                    cliente.get("direccion")
+                    or cliente.get("direccion_completa")
+                    or cliente.get("ubicacion")
+                    or ""
+                ).strip()
+                or "Lima"
+            )
+            provincia_cliente = str(cliente.get("provincia") or "LIMA").strip() or "LIMA"
+            departamento_cliente = str(cliente.get("departamento") or "LIMA").strip() or "LIMA"
+            distrito_cliente = str(cliente.get("distrito") or "LIMA").strip() or "LIMA"
+            ubigeo_cliente = str(cliente.get("ubigeo") or "150101").strip() or "150101"
 
             # =============================
             # PAYLOAD IDÉNTICO A POSTMAN
@@ -107,12 +123,12 @@ class FacturacionService:
                     "numDoc": int(cliente.get("documento", 0)),
                     "rznSocial": cliente.get("nombre", "Cliente"),
                     "address": {
-                        "direccion": cliente.get("direccion", "Lima"),
-                        "provincia": cliente.get("provincia", "LIMA"),
-                        "departamento": cliente.get("departamento", "LIMA"),
-                        "distrito": cliente.get("distrito", "LIMA"),
-                        "ubigeo": cliente.get("ubigeo", "150101"),
-                        "ubigueo": cliente.get("ubigeo", "150101")
+                        "direccion": direccion_cliente,
+                        "provincia": provincia_cliente,
+                        "departamento": departamento_cliente,
+                        "distrito": distrito_cliente,
+                        "ubigeo": ubigeo_cliente,
+                        "ubigueo": ubigeo_cliente
                     }
                 },
 
