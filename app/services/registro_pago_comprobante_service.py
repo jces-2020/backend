@@ -1,5 +1,6 @@
 import base64
 import re
+import uuid
 from datetime import date
 from typing import Any, Dict, Optional
 
@@ -47,7 +48,9 @@ class RegistroPagoComprobanteService:
             if not pdf_bytes:
                 return {"success": False, "message": "PDF invalido"}
 
+            bucket_name = str(RegistroPagoComprobanteService.BUCKET_NAME or "COMPROBANTE").upper().strip()
             carpeta = "BOLETAS" if tipo_normalizado == "boleta" else "FACTURAS"
+            carpeta = carpeta.upper().strip()
             nombre_archivo = RegistroPagoComprobanteService._build_filename(
                 tipo_comprobante=tipo_normalizado,
                 serie=serie,
@@ -55,14 +58,24 @@ class RegistroPagoComprobanteService:
             )
             ruta_storage = f"{carpeta}/{nombre_archivo}"
 
-            supabase.storage.from_(RegistroPagoComprobanteService.BUCKET_NAME).upload(
-                path=ruta_storage,
-                file=pdf_bytes,
-                file_options={"content-type": "application/pdf"}
-            )
+            try:
+                supabase.storage.from_(bucket_name).upload(
+                    path=ruta_storage,
+                    file=pdf_bytes,
+                    file_options={"content-type": "application/pdf", "upsert": "true"}
+                )
+            except Exception:
+                # Fallback: si el provider rechaza upsert o hay colisión de nombre,
+                # subir con nombre único para no perder el comprobante.
+                ruta_storage = f"{carpeta}/{RegistroPagoComprobanteService._build_filename(tipo_normalizado, serie, correlativo, force_unique=True)}"
+                supabase.storage.from_(bucket_name).upload(
+                    path=ruta_storage,
+                    file=pdf_bytes,
+                    file_options={"content-type": "application/pdf"}
+                )
 
             documento_url = supabase.storage.from_(
-                RegistroPagoComprobanteService.BUCKET_NAME
+                bucket_name
             ).get_public_url(ruta_storage)
             documento_url = RegistroPagoComprobanteService._extract_public_url(documento_url)
 
@@ -77,22 +90,53 @@ class RegistroPagoComprobanteService:
 
             registro_objetivo_id = str(registro_pago_id or "").strip() or None
 
+            ventas_recientes_cliente = []
+            carrito_ref = None
+            try:
+                ventas_recientes = (
+                    supabase.table("venta")
+                    .select("id_venta,carrito_id,registro_pago_id,fecha_venta,monto")
+                    .eq("cliente_id", cliente_id)
+                    .order("fecha_venta", desc=True)
+                    .limit(500)
+                    .execute()
+                )
+                ventas_recientes_cliente = ventas_recientes.data or []
+                if ventas_recientes_cliente:
+                    carrito_ref = ventas_recientes_cliente[0].get("carrito_id")
+            except Exception as exc_ventas:
+                print(f"[registro_pago] WARN no se pudieron cargar ventas recientes: {exc_ventas}")
+
             if not registro_objetivo_id:
                 try:
-                    # Reusar el registro de pago más reciente ya enlazado a ventas del cliente,
-                    # útil cuando el frontend no envía registro_pago_id.
-                    ventas_con_registro = (
-                        supabase.table("venta")
-                        .select("registro_pago_id,fecha_venta")
-                        .eq("cliente_id", cliente_id)
-                        .not_.is_("registro_pago_id", "null")
-                        .order("fecha_venta", desc=True)
-                        .limit(1)
-                        .execute()
-                    )
-                    fila = (ventas_con_registro.data or [None])[0]
-                    if fila and fila.get("registro_pago_id"):
-                        registro_objetivo_id = str(fila.get("registro_pago_id"))
+                    # Preferir registro de pago ya enlazado al carrito más reciente del cliente.
+                    registro_ids = []
+                    for row in ventas_recientes_cliente:
+                        if carrito_ref and row.get("carrito_id") != carrito_ref:
+                            continue
+                        rid = row.get("registro_pago_id")
+                        if rid:
+                            registro_ids.append(str(rid))
+
+                    registro_ids = list(dict.fromkeys(registro_ids))
+                    if registro_ids:
+                        reg_rows = (
+                            supabase.table("registro_pago")
+                            .select("id_registro,fecha,total,documento")
+                            .in_("id_registro", registro_ids)
+                            .execute()
+                        ).data or []
+
+                        # 1) Si existe uno sin documento, actualizar ese primero.
+                        sin_doc = [
+                            r for r in reg_rows
+                            if not str(r.get("documento") or "").strip()
+                        ]
+                        if sin_doc:
+                            registro_objetivo_id = str(sin_doc[0].get("id_registro"))
+                        else:
+                            # 2) Si todos tienen documento, usar el más reciente para reemplazo coherente.
+                            registro_objetivo_id = str(registro_ids[0])
                 except Exception as exc_resolver:
                     print(f"[registro_pago] WARN no se pudo resolver registro por ventas: {exc_resolver}")
 
@@ -135,22 +179,12 @@ class RegistroPagoComprobanteService:
 
             # Enlazar ventas pendientes del cliente (sin registro_pago_id) al nuevo registro.
             try:
-                ventas_pendientes = (
-                    supabase.table("venta")
-                    .select("id_venta,carrito_id,fecha_venta")
-                    .eq("cliente_id", cliente_id)
-                    .is_("registro_pago_id", "null")
-                    .order("fecha_venta", desc=True)
-                    .limit(300)
-                    .execute()
-                )
-                filas = ventas_pendientes.data or []
+                filas = [
+                    f for f in (ventas_recientes_cliente or [])
+                    if f.get("id_venta") and (not carrito_ref or f.get("carrito_id") == carrito_ref)
+                ]
                 if filas:
-                    carrito_ref = filas[0].get("carrito_id")
-                    if carrito_ref:
-                        ids = [f.get("id_venta") for f in filas if f.get("id_venta") and f.get("carrito_id") == carrito_ref]
-                    else:
-                        ids = [f.get("id_venta") for f in filas if f.get("id_venta")]
+                    ids = [f.get("id_venta") for f in filas if f.get("id_venta")]
                     if ids:
                         (
                             supabase.table("venta")
@@ -186,11 +220,14 @@ class RegistroPagoComprobanteService:
     def _build_filename(
         tipo_comprobante: str,
         serie: Optional[str],
-        correlativo: Optional[str]
+        correlativo: Optional[str],
+        force_unique: bool = False,
     ) -> str:
         safe_serie = RegistroPagoComprobanteService._safe_text(serie) or "SIN_SERIE"
         safe_corr = RegistroPagoComprobanteService._safe_text(correlativo) or "SIN_CORRELATIVO"
         prefijo = "BOLETA" if tipo_comprobante == "boleta" else "FACTURA"
+        if force_unique:
+            return f"{prefijo}_{safe_serie}-{safe_corr}-{uuid.uuid4().hex[:10]}.pdf"
         return f"{prefijo}_{safe_serie}-{safe_corr}.pdf"
 
     @staticmethod
