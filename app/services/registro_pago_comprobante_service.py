@@ -5,6 +5,7 @@ from datetime import date
 from typing import Any, Dict, Optional
 
 from services.facturacion_service import FacturacionService
+from services.gastos_service import actualizar_subtotal_caja_por_registro_pago
 from services.supabase_client import supabase
 
 
@@ -122,6 +123,14 @@ class RegistroPagoComprobanteService:
                 }
 
             registro_objetivo_id = registro.get("id_registro")
+
+            # ACTUALIZAR SUBTOTAL EN CAJA: Sumar todos los registro_pago del día
+            # Esta función recalcula el total de registro_pago de hoy y lo registra en caja.subtotal
+            try:
+                actualizar_subtotal_caja_por_registro_pago(hoy)
+                print(f"[registro_pago] OK - Subtotal de caja actualizado para {hoy}")
+            except Exception as exc_caja:
+                print(f"[registro_pago] WARN - Error actualizando subtotal de caja: {exc_caja}")
 
             # Enlazar ventas pendientes del cliente (sin registro_pago_id) al nuevo registro.
             try:

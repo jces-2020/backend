@@ -112,10 +112,70 @@ def get_resumen_dia(fecha: str) -> Dict[str, Any]:
     }
 
 
+def actualizar_subtotal_caja_por_registro_pago(fecha: str) -> bool:
+    """
+    Actualiza el subtotal en la tabla caja sumando todos los registro_pago de la fecha especificada.
+    Se ejecuta cada vez que se registra un nuevo pago.
+    
+    Flujo:
+    1. Obtiene todos los registro_pago de la fecha
+    2. Suma los totales
+    3. Si existe caja para esa fecha, actualiza el subtotal
+    4. Si no existe, crea un nuevo registro con el subtotal
+    
+    Retorna True si la operación fue exitosa, False en caso contrario.
+    """
+    try:
+        # 1. Sumar todos los registro_pago de la fecha
+        registros = supabase.table("registro_pago").select(
+            "id_registro, total"
+        ).eq("fecha", fecha).execute()
+        
+        registros_list = registros.data or []
+        total_dia = sum(float(r.get("total", 0) or 0) for r in registros_list)
+        
+        print(f"[actualizar_subtotal_caja] Fecha: {fecha}, Total registro_pago: S/ {total_dia:.2f}, Registros: {len(registros_list)}")
+        
+        # 2. Buscar si existe caja para esa fecha
+        caja_result = supabase.table("caja").select(
+            "id_caja, subtotal, turno"
+        ).eq("fecha", fecha).limit(1).execute()
+        
+        cajas = caja_result.data or []
+        
+        if cajas:
+            # Existe caja para la fecha: actualizar subtotal
+            caja_actual = cajas[0]
+            print(f"[actualizar_subtotal_caja] Actualizando caja existente (id: {caja_actual.get('id_caja')})")
+            
+            supabase.table("caja").update({
+                "subtotal": total_dia
+            }).eq("id_caja", caja_actual.get("id_caja")).execute()
+        else:
+            # No existe caja para la fecha: crear una nueva
+            print(f"[actualizar_subtotal_caja] Creando nuevo registro de caja para {fecha}")
+            
+            supabase.table("caja").insert({
+                "fecha": fecha,
+                "turno": "diurno",
+                "subtotal": total_dia
+            }).execute()
+        
+        print(f"[actualizar_subtotal_caja] OK - Subtotal actualizado a S/ {total_dia:.2f}")
+        return True
+        
+    except Exception as exc:  # noqa: BLE001
+        print(f"[actualizar_subtotal_caja] ERROR: {exc}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 __all__ = [
     "get_gastos_by_date",
     "get_caja_by_date",
     "get_ventas_by_date",
     "create_gasto",
-    "get_resumen_dia"
+    "get_resumen_dia",
+    "actualizar_subtotal_caja_por_registro_pago"
 ]
