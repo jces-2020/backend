@@ -108,7 +108,7 @@ class ClienteGraficoService:
             return []
 
         response = supabase.table("venta").select(
-            "fecha_venta as fecha,monto"
+            "fecha_venta,monto"
         ).in_("id_venta", venta_ids).gte(
             "fecha_venta", fecha_inicio.date().isoformat()
         ).lte(

@@ -9,6 +9,7 @@ import json
 barra_progreso_api = Blueprint('barra_progreso_api', __name__)
 bp = barra_progreso_api  # alias para auto-registro del factory
 DEBUG_BARRA_LOGS = os.environ.get('DEBUG_BARRA_LOGS', '').strip().lower() in ('1', 'true', 'yes', 'si')
+TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
 
 
 def _dbg(msg: str):
@@ -320,7 +321,7 @@ def barra_progreso_servicio(cliente_id):
     """Devuelve barra de progreso para servicios del cliente."""
     try:
         ventas_res = supabase.table('venta') \
-            .select('carrito_id, fecha_venta') \
+            .select('carrito_id, tipo_venta_id, fecha_venta') \
             .eq('cliente_id', cliente_id) \
             .order('fecha_venta', desc=True) \
             .execute()
@@ -328,6 +329,10 @@ def barra_progreso_servicio(cliente_id):
         carrito_ids = []
         seen = set()
         for row in (ventas_res.data or []):
+            tipo_venta_id = str(row.get('tipo_venta_id') or '').strip()
+            # Servicio: cualquier tipo_venta distinto al de producto.
+            if not tipo_venta_id or tipo_venta_id == TIPO_VENTA_ID_PRODUCTO:
+                continue
             cid = row.get('carrito_id')
             if not cid or cid in seen:
                 continue
@@ -432,7 +437,7 @@ def barra_progreso(cliente_id):
         
         # Buscar carritos del cliente desde la tabla venta (modelo nuevo)
         ventas_res = supabase.table('venta') \
-            .select('carrito_id, fecha_venta') \
+            .select('carrito_id, tipo_venta_id, fecha_venta') \
             .eq('cliente_id', cliente_id) \
             .order('fecha_venta', desc=True) \
             .execute()
@@ -440,6 +445,10 @@ def barra_progreso(cliente_id):
         carrito_ids = []
         seen = set()
         for row in (ventas_res.data or []):
+            tipo_venta_id = str(row.get('tipo_venta_id') or '').strip()
+            # Pedido: solo ventas de tipo producto.
+            if tipo_venta_id != TIPO_VENTA_ID_PRODUCTO:
+                continue
             cid = row.get('carrito_id')
             if not cid or cid in seen:
                 continue
