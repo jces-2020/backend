@@ -13,9 +13,6 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 from services.supabase_client import supabase
-from services.venta_detalle_service import obtener_venta_ids_por_cliente
-
-
 class ClienteGraficoService:
     @staticmethod
     def obtener_grafico_pagos_mensuales(
@@ -103,23 +100,34 @@ class ClienteGraficoService:
         fecha_inicio: datetime,
         fecha_fin: datetime
     ) -> List[Dict[str, Any]]:
-        venta_ids = obtener_venta_ids_por_cliente(cliente_id)
-        if not venta_ids:
+        ventas = (
+            supabase.table("venta")
+            .select("registro_pago_id")
+            .eq("cliente_id", cliente_id)
+            .not_.is_("registro_pago_id", "null")
+            .execute()
+        )
+        registro_ids = sorted({
+            row.get("registro_pago_id")
+            for row in (ventas.data or [])
+            if row.get("registro_pago_id")
+        })
+        if not registro_ids:
             return []
 
-        response = supabase.table("venta").select(
-            "fecha_venta,monto"
-        ).in_("id_venta", venta_ids).gte(
-            "fecha_venta", fecha_inicio.date().isoformat()
+        response = supabase.table("registro_pago").select(
+            "fecha,total,monto"
+        ).in_("id_registro", registro_ids).gte(
+            "fecha", fecha_inicio.date().isoformat()
         ).lte(
-            "fecha_venta", fecha_fin.date().isoformat()
-        ).order("fecha_venta").execute()
+            "fecha", fecha_fin.date().isoformat()
+        ).order("fecha").execute()
 
         pagos = []
         for row in response.data or []:
             pagos.append({
-                "fecha": row.get("fecha") or row.get("fecha_venta"),
-                "monto": row.get("monto"),
+                "fecha": row.get("fecha"),
+                "monto": row.get("total") if row.get("total") is not None else row.get("monto"),
             })
         return pagos
 

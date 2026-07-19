@@ -72,125 +72,57 @@ class RegistroPagoComprobanteService:
                     "message": "No se pudo obtener URL publica del comprobante"
                 }
 
-            insert_data = {
-                "fecha": date.today().isoformat(),
-                "monto": monto,
-                "documento": documento_url,
-                "cliente_id": cliente_id,
-                "metodo_pago_id": metodo_pago_id
-            }
+            hoy = date.today().isoformat()
+            total = round(float(monto or 0), 2)
 
-            # Si llega un id de registro_pago, actualizar ese registro exacto.
-            if registro_pago_id:
+            registro_objetivo_id = str(registro_pago_id or "").strip() or None
+
+            if not registro_objetivo_id:
                 try:
-                    existente_por_id = supabase.table("registro_pago").select(
-                        "id_registro, cliente_id"
-                    ).eq("id_registro", registro_pago_id).limit(1).execute()
+                    # Reusar el registro de pago más reciente ya enlazado a ventas del cliente,
+                    # útil cuando el frontend no envía registro_pago_id.
+                    ventas_con_registro = (
+                        supabase.table("venta")
+                        .select("registro_pago_id,fecha_venta")
+                        .eq("cliente_id", cliente_id)
+                        .not_.is_("registro_pago_id", "null")
+                        .order("fecha_venta", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    fila = (ventas_con_registro.data or [None])[0]
+                    if fila and fila.get("registro_pago_id"):
+                        registro_objetivo_id = str(fila.get("registro_pago_id"))
+                except Exception as exc_resolver:
+                    print(f"[registro_pago] WARN no se pudo resolver registro por ventas: {exc_resolver}")
 
-                    fila = (existente_por_id.data or [None])[0]
-                    if fila and str(fila.get("cliente_id") or "") == str(cliente_id):
-                        update_payload = {
-                            "documento": documento_url,
-                            "metodo_pago_id": metodo_pago_id,
-                        }
-                        actualizado = supabase.table("registro_pago").update(
-                            update_payload
-                        ).eq("id_registro", registro_pago_id).execute()
-                        registro_actualizado = (actualizado.data or [None])[0] or {"id_registro": registro_pago_id}
-                        return {
-                            "success": True,
-                            "message": "Comprobante vinculado al registro de pago por id",
-                            "pdf": pdf_base64,
-                            "documento_url": documento_url,
-                            "storage_path": ruta_storage,
-                            "registro_pago": registro_actualizado
-                        }
-                except Exception as exc_id:
-                    print(f"[registro_pago] Error actualizando por id: {exc_id}")
-
-            # Si ya existe un registro de pago pendiente (sin documento) para hoy,
-            # actualizarlo en lugar de insertar uno nuevo.
-            try:
-                pendientes_null = supabase.table("registro_pago").select(
-                    "id_registro, monto"
-                ).eq("cliente_id", cliente_id).eq(
-                    "fecha", insert_data["fecha"]
-                ).is_("documento", "null").order("id_registro", desc=True).limit(50).execute()
-
-                pendientes_empty = supabase.table("registro_pago").select(
-                    "id_registro, monto"
-                ).eq("cliente_id", cliente_id).eq(
-                    "fecha", insert_data["fecha"]
-                ).eq("documento", "").order("id_registro", desc=True).limit(50).execute()
-
-                pendientes = (pendientes_null.data or []) + (pendientes_empty.data or [])
-
-                id_registro = None
-                if pendientes:
-                    monto_objetivo = round(float(monto or 0), 2)
-
-                    # 1) match exacto a 2 decimales
-                    exactos = [
-                        p for p in pendientes
-                        if round(float(p.get("monto") or 0), 2) == monto_objetivo
-                    ]
-                    if exactos:
-                        id_registro = exactos[0].get("id_registro")
-                    else:
-                        # 2) fallback por cercania para cubrir redondeos/IGV
-                        ordenados = sorted(
-                            pendientes,
-                            key=lambda p: abs(float(p.get("monto") or 0) - float(monto or 0))
-                        )
-                        candidato = ordenados[0] if ordenados else None
-                        if candidato:
-                            diferencia = abs(float(candidato.get("monto") or 0) - float(monto or 0))
-                            if diferencia <= 0.30:
-                                id_registro = candidato.get("id_registro")
-
-                if id_registro:
-                    update_payload = {
+            if registro_objetivo_id:
+                actualizado = (
+                    supabase.table("registro_pago")
+                    .update({
+                        "fecha": hoy,
+                        "total": total,
                         "documento": documento_url,
-                        "metodo_pago_id": metodo_pago_id,
-                    }
-                    actualizado = supabase.table("registro_pago").update(
-                        update_payload
-                    ).eq("id_registro", id_registro).execute()
-
-                    registro_actualizado = (actualizado.data or [None])[0] or {"id_registro": id_registro}
+                    })
+                    .eq("id_registro", registro_objetivo_id)
+                    .execute()
+                )
+                registro = (actualizado.data or [None])[0]
+                if registro:
                     return {
                         "success": True,
-                        "message": "Comprobante vinculado al registro de pago existente",
+                        "message": "Comprobante vinculado al registro de pago",
                         "pdf": pdf_base64,
                         "documento_url": documento_url,
                         "storage_path": ruta_storage,
-                        "registro_pago": registro_actualizado
+                        "registro_pago": registro
                     }
-            except Exception as exc_pending:
-                print(f"[registro_pago] Error actualizando pendiente: {exc_pending}")
 
-            # Validar que no sea duplicado: mismo cliente, mismo monto, mismo día
-            try:
-                existing = supabase.table("registro_pago").select(
-                    "id_registro"
-                ).eq("cliente_id", cliente_id).eq("monto", monto).eq(
-                    "fecha", insert_data["fecha"]
-                ).eq("documento", documento_url).execute()
-                
-                if existing.data and len(existing.data) > 0:
-                    print(f"[registro_pago] Duplicado detectado para cliente {cliente_id}, monto {monto}")
-                    return {
-                        "success": True,
-                        "message": "Comprobante ya registrado",
-                        "pdf": pdf_base64,
-                        "documento_url": documento_url,
-                        "storage_path": ruta_storage,
-                        "registro_pago": existing.data[0]
-                    }
-            except Exception as exc_dup:
-                print(f"[registro_pago] Error validando duplicado: {exc_dup}")
-
-            registro_insert = supabase.table("registro_pago").insert(insert_data).execute()
+            registro_insert = supabase.table("registro_pago").insert({
+                "fecha": hoy,
+                "total": total,
+                "documento": documento_url,
+            }).execute()
             registro = (registro_insert.data or [None])[0]
 
             if not registro:
@@ -199,9 +131,39 @@ class RegistroPagoComprobanteService:
                     "message": "PDF guardado pero no se pudo registrar en tabla registro_pago"
                 }
 
+            registro_objetivo_id = registro.get("id_registro")
+
+            # Enlazar ventas pendientes del cliente (sin registro_pago_id) al nuevo registro.
+            try:
+                ventas_pendientes = (
+                    supabase.table("venta")
+                    .select("id_venta,carrito_id,fecha_venta")
+                    .eq("cliente_id", cliente_id)
+                    .is_("registro_pago_id", "null")
+                    .order("fecha_venta", desc=True)
+                    .limit(300)
+                    .execute()
+                )
+                filas = ventas_pendientes.data or []
+                if filas:
+                    carrito_ref = filas[0].get("carrito_id")
+                    if carrito_ref:
+                        ids = [f.get("id_venta") for f in filas if f.get("id_venta") and f.get("carrito_id") == carrito_ref]
+                    else:
+                        ids = [f.get("id_venta") for f in filas if f.get("id_venta")]
+                    if ids:
+                        (
+                            supabase.table("venta")
+                            .update({"registro_pago_id": registro_objetivo_id})
+                            .in_("id_venta", ids)
+                            .execute()
+                        )
+            except Exception as exc_link:
+                print(f"[registro_pago] WARN no se pudo enlazar ventas pendientes: {exc_link}")
+
             return {
                 "success": True,
-                "message": "Comprobante guardado en storage y registrado en pago",
+                "message": "Comprobante guardado en storage y registrado en registro_pago",
                 "pdf": pdf_base64,
                 "documento_url": documento_url,
                 "storage_path": ruta_storage,

@@ -1167,39 +1167,8 @@ def confirmar_compra():
 
 
 
-        # 6. Registrar comprobante de pago y enlazarlo a las ventas creadas
-        try:
-            registro_pago_id = None
-
-            if total_venta > 0 and ventas_creadas:
-                caja_id_activa = _obtener_o_crear_caja_activa()
-                registro_payload = {
-                    "fecha": date.today().isoformat(),
-                    "total": total_venta,
-                    "documento": None,
-                    "caja_id": caja_id_activa,
-                }
-                registro_res = supabase.table("registro_pago").insert(registro_payload).execute()
-                registro_row = (registro_res.data or [None])[0]
-                if registro_row:
-                    registro_pago_id = registro_row.get("id_registro")
-                    venta_ids = [v.get("id_venta") for v in ventas_creadas if v.get("id_venta")]
-                    if venta_ids:
-                        supabase.table("venta") \
-                            .update({"registro_pago_id": registro_pago_id}) \
-                            .in_("id_venta", venta_ids) \
-                            .execute()
-
-                    # Sumar compra al monto de empresa usando el total del registro de pago.
-                    try:
-                        from app.services.pago_balance_service import sumar_monto_empresa
-                        sumar_monto_empresa(float(total_venta or 0))
-                    except Exception as exc_saldo:
-                        print(f"[CONFIRMAR_COMPRA] WARN No se pudo actualizar monto_empresa: {exc_saldo}")
-                print(f"[CONFIRMAR_COMPRA] OK Registro de pago creado: {registro_pago_id}")
-        except Exception as e:
-            # Log pero no fallar el flujo principal
-            print(f"[CONFIRMAR_COMPRA] WARN Error registrando venta: {str(e)}")
+        # 6. El registro de pago (fecha/total/documento) se persiste al generar comprobante.
+        registro_pago_id = None
 
 
 
