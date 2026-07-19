@@ -88,8 +88,6 @@ class RegistroPagoComprobanteService:
             hoy = date.today().isoformat()
             total = round(float(monto or 0), 2)
 
-            registro_objetivo_id = str(registro_pago_id or "").strip() or None
-
             ventas_recientes_cliente = []
             carrito_ref = None
             try:
@@ -102,65 +100,13 @@ class RegistroPagoComprobanteService:
                     .execute()
                 )
                 ventas_recientes_cliente = ventas_recientes.data or []
-                if ventas_recientes_cliente:
-                    carrito_ref = ventas_recientes_cliente[0].get("carrito_id")
+                # Elegir el carrito pendiente más reciente (sin registro_pago_id).
+                for row in ventas_recientes_cliente:
+                    if row.get("id_venta") and not row.get("registro_pago_id"):
+                        carrito_ref = row.get("carrito_id")
+                        break
             except Exception as exc_ventas:
                 print(f"[registro_pago] WARN no se pudieron cargar ventas recientes: {exc_ventas}")
-
-            if not registro_objetivo_id:
-                try:
-                    # Preferir registro de pago ya enlazado al carrito más reciente del cliente.
-                    registro_ids = []
-                    for row in ventas_recientes_cliente:
-                        if carrito_ref and row.get("carrito_id") != carrito_ref:
-                            continue
-                        rid = row.get("registro_pago_id")
-                        if rid:
-                            registro_ids.append(str(rid))
-
-                    registro_ids = list(dict.fromkeys(registro_ids))
-                    if registro_ids:
-                        reg_rows = (
-                            supabase.table("registro_pago")
-                            .select("id_registro,fecha,total,documento")
-                            .in_("id_registro", registro_ids)
-                            .execute()
-                        ).data or []
-
-                        # 1) Si existe uno sin documento, actualizar ese primero.
-                        sin_doc = [
-                            r for r in reg_rows
-                            if not str(r.get("documento") or "").strip()
-                        ]
-                        if sin_doc:
-                            registro_objetivo_id = str(sin_doc[0].get("id_registro"))
-                        else:
-                            # 2) Si todos tienen documento, usar el más reciente para reemplazo coherente.
-                            registro_objetivo_id = str(registro_ids[0])
-                except Exception as exc_resolver:
-                    print(f"[registro_pago] WARN no se pudo resolver registro por ventas: {exc_resolver}")
-
-            if registro_objetivo_id:
-                actualizado = (
-                    supabase.table("registro_pago")
-                    .update({
-                        "fecha": hoy,
-                        "total": total,
-                        "documento": documento_url,
-                    })
-                    .eq("id_registro", registro_objetivo_id)
-                    .execute()
-                )
-                registro = (actualizado.data or [None])[0]
-                if registro:
-                    return {
-                        "success": True,
-                        "message": "Comprobante vinculado al registro de pago",
-                        "pdf": pdf_base64,
-                        "documento_url": documento_url,
-                        "storage_path": ruta_storage,
-                        "registro_pago": registro
-                    }
 
             registro_insert = supabase.table("registro_pago").insert({
                 "fecha": hoy,
@@ -181,7 +127,9 @@ class RegistroPagoComprobanteService:
             try:
                 filas = [
                     f for f in (ventas_recientes_cliente or [])
-                    if f.get("id_venta") and (not carrito_ref or f.get("carrito_id") == carrito_ref)
+                    if f.get("id_venta")
+                    and not f.get("registro_pago_id")
+                    and (not carrito_ref or f.get("carrito_id") == carrito_ref)
                 ]
                 if filas:
                     ids = [f.get("id_venta") for f in filas if f.get("id_venta")]
@@ -197,7 +145,7 @@ class RegistroPagoComprobanteService:
 
             return {
                 "success": True,
-                "message": "Comprobante guardado en storage y registrado en registro_pago",
+                "message": "Comprobante creado en storage y registrado como nuevo en registro_pago",
                 "pdf": pdf_base64,
                 "documento_url": documento_url,
                 "storage_path": ruta_storage,
