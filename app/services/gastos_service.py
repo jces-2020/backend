@@ -49,7 +49,7 @@ def get_ventas_by_date(fecha: str) -> List[Dict[str, Any]]:
     """
     try:
         result = supabase.table("venta").select(
-            "id_venta, total, fecha_venta, caja_id, metodo"
+            "id_venta, monto, fecha_venta, metodo"
         ).order("fecha_venta", desc=True).execute()
         print(f"[gastos_service] fetched {len(result.data or [])} ventas (todas)")
         return result.data or []
@@ -95,7 +95,7 @@ def get_resumen_dia(fecha: str) -> Dict[str, Any]:
     
     total_gastos = sum(float(g.get("monto", 0) or 0) for g in gastos)
     total_ingresos_caja = sum(float(c.get("subtotal", 0) or 0) for c in cajas)
-    total_ventas = sum(float(v.get("total", 0) or 0) for v in ventas)
+    total_ventas = sum(float(v.get("monto", 0) or 0) for v in ventas)
     
     # El total que debería tener es: ingresos - gastos
     total_neto = total_ingresos_caja + total_ventas - total_gastos

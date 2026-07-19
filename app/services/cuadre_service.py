@@ -56,7 +56,7 @@ def get_caja_by_month(mes: str) -> List[Dict[str, Any]]:
 def get_ventas_by_month(mes: str) -> List[Dict[str, Any]]:
     ini, fin = _month_range(mes)
     try:
-        result = supabase.table("venta").select("id_venta, total, fecha_venta, caja_id, metodo").gte("fecha_venta", ini).lte("fecha_venta", fin).execute()
+        result = supabase.table("venta").select("id_venta, monto, fecha_venta, metodo").gte("fecha_venta", ini).lte("fecha_venta", fin).execute()
         return result.data or []
     except Exception as exc:
         print(f"[cuadre_service] error ventas: {exc}")
@@ -71,7 +71,7 @@ def get_resumen_mes(mes: str) -> Dict[str, Any]:
     total_gastos = sum(float(g.get("monto", 0) or 0) for g in gastos)
     # Monto en caja = suma de subtotales de los registros de tabla caja del mes seleccionado
     total_ingresos_caja = sum(float(c.get("subtotal") or 0) for c in cajas)
-    total_ventas = sum(float(v.get("total", 0) or 0) for v in ventas)
+    total_ventas = sum(float(v.get("monto", 0) or 0) for v in ventas)
 
     ingreso = total_ingresos_caja
     egreso = total_gastos
@@ -126,7 +126,7 @@ def get_totales_por_metodo_venta(ventas: List[Dict[str, Any]]) -> Dict[str, floa
     totales = {}
     for v in ventas:
         metodo = _normalizar_metodo(v.get("metodo"))
-        total = float(v.get("total") or 0)
+        total = float(v.get("monto") or 0)
         if metodo:
             totales[metodo] = totales.get(metodo, 0) + total
     return totales

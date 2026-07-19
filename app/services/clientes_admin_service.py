@@ -64,22 +64,45 @@ def get_cliente_by_id(cliente_id: str) -> Optional[Dict[str, Any]]:
 def get_cliente_ventas(cliente_id: str) -> List[Dict[str, Any]]:
     """
     Obtiene las ventas/facturas asociadas a un cliente.
-    Se relaciona a través de registro_pago -> cliente_id
+    Se relaciona a través de venta -> registro_pago_id -> registro_pago.
     """
     try:
-        # Obtener registros de pago del cliente
-        result = supabase.table("registro_pago").select(
-            """
-            id_registro,
-            fecha,
-            monto,
-            documento,
-            metodo_pago:metodo_pago_id(descripcion)
-            """
-        ).eq("cliente_id", cliente_id).order("fecha", desc=True).execute()
-        
-        print(f"[clientes_admin_service] fetched {len(result.data or [])} ventas for cliente {cliente_id}")
-        return result.data or []
+        ventas_res = (
+            supabase.table("venta")
+            .select("id_venta, monto, fecha_venta, metodo, registro_pago_id")
+            .eq("cliente_id", cliente_id)
+            .order("fecha_venta", desc=True)
+            .execute()
+        )
+
+        ventas = ventas_res.data or []
+        registro_ids = [row.get("registro_pago_id") for row in ventas if row.get("registro_pago_id")]
+        registro_map = {}
+        if registro_ids:
+            registros_res = (
+                supabase.table("registro_pago")
+                .select("id_registro, fecha, total, documento")
+                .in_("id_registro", registro_ids)
+                .execute()
+            )
+            for reg in registros_res.data or []:
+                registro_map[reg.get("id_registro")] = reg
+
+        resultado = []
+        for venta in ventas:
+            registro = registro_map.get(venta.get("registro_pago_id")) if venta.get("registro_pago_id") else None
+            monto = float(venta.get("monto") or (registro.get("total") if registro else 0) or 0)
+            resultado.append({
+                "id_registro": registro.get("id_registro") if registro else None,
+                "id_venta": venta.get("id_venta"),
+                "fecha": venta.get("fecha_venta") or (registro.get("fecha") if registro else None),
+                "monto": monto,
+                "documento": (registro.get("documento") if registro else None),
+                "metodo": venta.get("metodo") or "-",
+            })
+
+        print(f"[clientes_admin_service] fetched {len(resultado)} ventas for cliente {cliente_id}")
+        return resultado
     except Exception as exc:
         print(f"[clientes_admin_service] error fetching ventas: {exc}")
         import traceback

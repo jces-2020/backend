@@ -26,128 +26,122 @@ def obtener_payload_cuadre_caja(fecha=None):
     fecha_inicio = date.fromisoformat(fecha)
     fecha_fin = (fecha_inicio + timedelta(days=1)).isoformat()
 
-    # COMPROBANTES: de registro_pago con cliente
+    # 1. TRAER TODAS LAS VENTAS DEL DÍA CON TIPO_VENTA_ID
+    ventas_por_tipo = {}
+    totales_por_tipo = {}
     comprobantes = []
-    try:
-        # Intentar primero con columnas extendidas; si no existen, usar un select basico.
-        try:
-            result_comprobantes = (
-                supabase.table("registro_pago")
-                .select("id_registro, fecha, monto, documento, metodo_pago, cliente_id, metodo_pago_id")
-                .gte("fecha", fecha)
-                .lt("fecha", fecha_fin)
-                .order("fecha", desc=True)
-                .execute()
-            )
-        except Exception:
-            result_comprobantes = (
-                supabase.table("registro_pago")
-                .select("id_registro, fecha, monto, documento, cliente_id")
-                .gte("fecha", fecha)
-                .lt("fecha", fecha_fin)
-                .order("fecha", desc=True)
-                .execute()
-            )
-        registros = result_comprobantes.data or []
-        documentos_vistos = set()
-
-        cliente_ids = list({r.get("cliente_id") for r in registros if r.get("cliente_id")})
-        cliente_map = {}
-        if cliente_ids:
-            clientes_res = (
-                supabase.table("cliente")
-                .select("id_cliente, nombre")
-                
-                .in_("id_cliente", cliente_ids)
-                .execute()
-            )
-            for cliente in clientes_res.data or []:
-                cliente_map[cliente.get("id_cliente")] = cliente.get("nombre", "-")
-
-        # Si hay fila con comprobante PDF y otra sin documento para mismo cliente/fecha/monto,
-        # priorizar la fila con documento para evitar duplicados visuales.
-        firmas_con_documento = set()
-        for r in registros:
-            doc = str(r.get("documento") or "").strip()
-            if doc:
-                firma = (
-                    str(r.get("cliente_id") or ""),
-                    str(r.get("fecha") or "")[:10],
-                    round(float(r.get("monto") or 0), 2),
-                )
-                firmas_con_documento.add(firma)
-
-        for r in registros:
-            documento = r.get("documento") or ""
-            if documento and documento in documentos_vistos:
-                continue
-
-            if not documento:
-                firma = (
-                    str(r.get("cliente_id") or ""),
-                    str(r.get("fecha") or "")[:10],
-                    round(float(r.get("monto") or 0), 2),
-                )
-                if firma in firmas_con_documento:
-                    continue
-
-            if documento:
-                documentos_vistos.add(documento)
-
-            # Obtener nombre del cliente
-            cliente_nombre = cliente_map.get(r.get("cliente_id"), "-")
-
-            # Obtener descripción del método: preferir valor directo
-            metodo_desc = ""
-            metodo_directo = r.get("metodo_pago")
-            if isinstance(metodo_directo, str) and metodo_directo.strip():
-                metodo_desc = metodo_directo.strip()
-            else:
-                metodo_desc = ""
-
-            monto = float(r.get("monto") or 0)
-            numero_comprobante = documento or str(r.get("id_registro") or "")[:8]
-            documento_url = documento if isinstance(documento, str) and documento.startswith("http") else None
-
-            comprobantes.append({
-                "id": r.get("id_registro"),
-                "numero": numero_comprobante,
-                "cliente": cliente_nombre,
-                "metodo_pago": metodo_desc or "-",
-                "monto": monto,
-                "fecha": r.get("fecha") or "",
-                "documento": documento,
-                "documento_url": documento_url,
-                "comprobante": numero_comprobante,
-            })
-    except Exception as exc:  # noqa: BLE001
-        print(f"[caja_cuadre] error consultando comprobantes de registro_pago: {exc}")
-        comprobantes = []
-
-    # TOTALES: de venta por método
     totales = {"tarjeta": 0.0, "contado": 0.0, "yape": 0.0, "total": 0.0}
+    
     try:
         result_ventas = (
             supabase.table("venta")
-            .select("metodo, total")
+            .select("id_venta, monto, metodo, cliente_id, registro_pago_id, fecha_venta, tipo_venta_id")
             .gte("fecha_venta", fecha)
             .lt("fecha_venta", fecha_fin)
+            .order("fecha_venta", desc=True)
             .execute()
         )
         ventas = result_ventas.data or []
 
-        for v in ventas:
-            metodo_raw = v.get("metodo") or ""
-            total = float(v.get("total") or 0)
+        # Agrupar ventas por tipo_venta_id
+        for venta in ventas:
+            tipo_id = venta.get("tipo_venta_id") or "sin_tipo"
+            if tipo_id not in ventas_por_tipo:
+                ventas_por_tipo[tipo_id] = []
+            ventas_por_tipo[tipo_id].append(venta)
 
-            metodo_norm = _normalizar_metodo_pago(metodo_raw)
-            if metodo_norm:
-                totales[metodo_norm] += total
-            totales["total"] += total
+        # Traer tipos de venta
+        tipo_venta_ids = [tv_id for tv_id in ventas_por_tipo.keys() if tv_id != "sin_tipo"]
+        tipo_venta_map = {}
+        if tipo_venta_ids:
+            try:
+                tipos_res = (
+                    supabase.table("tipo_venta")
+                    .select("id_tipo, descripcion")
+                    .in_("id_tipo", tipo_venta_ids)
+                    .execute()
+                )
+                for tipo in tipos_res.data or []:
+                    tipo_venta_map[tipo.get("id_tipo")] = tipo.get("descripcion", "Desconocido")
+            except Exception as exc_tipos:  # noqa: BLE001
+                print(f"[caja_cuadre] error consultando tipo_venta: {exc_tipos}")
+
+        # Traer comprobantes desde registro_pago
+        registro_ids = [row.get("registro_pago_id") for venta_lista in ventas_por_tipo.values() for row in venta_lista if row.get("registro_pago_id")]
+        registro_map = {}
+        if registro_ids:
+            try:
+                registros_res = (
+                    supabase.table("registro_pago")
+                    .select("id_registro, fecha, total, documento")
+                    .in_("id_registro", registro_ids)
+                    .execute()
+                )
+                for reg in registros_res.data or []:
+                    registro_map[reg.get("id_registro")] = reg
+            except Exception as exc_registros:  # noqa: BLE001
+                print(f"[caja_cuadre] error consultando registro_pago: {exc_registros}")
+
+        # Traer clientes
+        cliente_ids = [row.get("cliente_id") for venta_lista in ventas_por_tipo.values() for row in venta_lista if row.get("cliente_id")]
+        cliente_map = {}
+        if cliente_ids:
+            try:
+                clientes_res = (
+                    supabase.table("cliente")
+                    .select("id_cliente, nombre")
+                    .in_("id_cliente", cliente_ids)
+                    .execute()
+                )
+                for cliente in clientes_res.data or []:
+                    cliente_map[cliente.get("id_cliente")] = cliente.get("nombre", "-")
+            except Exception as exc_clientes:  # noqa: BLE001
+                print(f"[caja_cuadre] error consultando clientes: {exc_clientes}")
+
+        # Construir comprobantes y calcular totales por tipo
+        for tipo_id, venta_lista in ventas_por_tipo.items():
+            tipo_label = tipo_venta_map.get(tipo_id, tipo_id)
+            subtotal_tipo = 0.0
+
+            for venta in venta_lista:
+                registro = registro_map.get(venta.get("registro_pago_id")) if venta.get("registro_pago_id") else None
+                documento = (registro.get("documento") if registro else "") or ""
+                monto_venta = float(venta.get("monto") or (registro.get("total") if registro else 0) or 0)
+
+                metodo_raw = venta.get("metodo") or ""
+                metodo_norm = _normalizar_metodo_pago(metodo_raw)
+                if metodo_norm:
+                    totales[metodo_norm] += monto_venta
+                totales["total"] += monto_venta
+                subtotal_tipo += monto_venta
+
+                cliente_nombre = cliente_map.get(venta.get("cliente_id"), "-")
+                metodo_desc = (venta.get("metodo") or "").strip() or "-"
+                numero_comprobante = documento or f"VENTA-{str(venta.get('id_venta') or '')[:8]}"
+                documento_url = documento if isinstance(documento, str) and documento.startswith("http") else None
+
+                comprobantes.append({
+                    "id": venta.get("id_venta"),
+                    "numero": numero_comprobante,
+                    "cliente": cliente_nombre,
+                    "metodo_pago": metodo_desc,
+                    "monto": monto_venta,
+                    "fecha": venta.get("fecha_venta") or (registro.get("fecha") if registro else "") or "",
+                    "documento": documento,
+                    "documento_url": documento_url,
+                    "comprobante": numero_comprobante,
+                    "tipo_venta": tipo_label,
+                })
+
+            totales_por_tipo[tipo_label] = round(subtotal_tipo, 2)
 
     except Exception as exc:  # noqa: BLE001
-        print(f"[caja_cuadre] error consultando ventas: {exc}")
+        print(f"[caja_cuadre] error consultando ventas y comprobantes: {exc}")
+        comprobantes = []
+        totales = {"tarjeta": 0.0, "contado": 0.0, "yape": 0.0, "total": 0.0}
+        totales_por_tipo = {}
 
+    # 2. CANTIDAD EN CAJA: TRAER DE TABLA CAJA SUBTOTAL
     cantidad_en_caja = 0.0
     try:
         result_caja = (
@@ -191,6 +185,7 @@ def obtener_payload_cuadre_caja(fecha=None):
     return {
         "fecha": fecha,
         "totales": totales,
+        "totales_por_tipo": totales_por_tipo,
         "comprobantes": comprobantes,
         "cantidad_en_caja": cantidad_en_caja,
         "retiros": retiros,
