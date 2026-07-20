@@ -11,6 +11,7 @@ from datetime import date
 from app.services.mercado_pago_service import mercado_pago_service
 from app.services.cortes_service import calcular_total_corte, es_material_aluminio
 from app.services.supabase_client import supabase
+from app.services.gastos_service import actualizar_subtotal_caja_por_registro_pago
 from app.controllers.clientes_controller import verify_jwt
 import uuid
 

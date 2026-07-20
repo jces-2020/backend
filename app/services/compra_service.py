@@ -9,6 +9,10 @@ import hashlib
 import time
 import re
 
+# Constante para tipo de venta de productos
+DEFAULT_TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
+DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"
+
 # -- JWT helper (para cuentas temporales) --------------------------------------
 def _build_jwt_temporal(cliente: dict) -> str:
     """Genera un JWT HS256 para una cuenta temporal de cliente."""
@@ -130,6 +134,7 @@ def _guardar_lineas_venta(
             "monto": monto,
             "metodo": metodo_pago,
             "fecha_venta": time.strftime("%Y-%m-%d"),
+            "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
         })
 
     for corte in (cortes_payload or []):
@@ -161,6 +166,7 @@ def _guardar_lineas_venta(
             "monto": monto,
             "metodo": metodo_pago,
             "fecha_venta": time.strftime("%Y-%m-%d"),
+            "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
         })
 
     if lineas:
@@ -247,10 +253,9 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
     
     # Si existe cliente
     if cliente:
-        # 1. Crear carrito_compras
+        # 1. Crear carrito_compras (sin cliente_id, ese dato va en venta)
         carrito_payload = {
-            "estado": "inicio",
-            "cliente_id": cliente["id_cliente"]
+            "estado": "inicio"
         }
         carrito_res = supabase.table("carrito_compras").insert(carrito_payload).execute()
         if not carrito_res.data:
@@ -318,7 +323,8 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "tipo": "entrega",
             "nombre": cliente["nombre"],
             "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
-            "id_cliente": cliente["id_cliente"]
+            "id_cliente": cliente["id_cliente"],
+            "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID
         }
         supabase.table("notificacion").insert(notif_payload).execute()
         
@@ -401,11 +407,9 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
         jwt_temp = _build_jwt_temporal(cliente_temp)
         # -----------------------------------------------------------------------
 
-        # 1. Crear carrito_compras (vinculado a cuenta temporal)
+        # 1. Crear carrito_compras (sin cliente_id, ese dato va en venta)
         carrito_payload = {
-            "estado": "inicio",
-            "cliente_id": cliente_temp["id_cliente"],
-            "nombre": nombre_completo
+            "estado": "inicio"
         }
         carrito_res = supabase.table("carrito_compras").insert(carrito_payload).execute()
         if not carrito_res.data:
@@ -470,7 +474,8 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "tipo": "entrega",
             "nombre": nombre_completo,
             "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
-            "id_cliente": cliente_temp["id_cliente"]
+            "id_cliente": cliente_temp["id_cliente"],
+            "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID
         }
         supabase.table("notificacion").insert(notif_payload).execute()
         
@@ -495,3 +500,4 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "jwt_temporal": jwt_temp,
             "cliente_id": str(cliente_temp["id_cliente"])
         }
+

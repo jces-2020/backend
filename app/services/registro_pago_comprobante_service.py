@@ -8,6 +8,8 @@ from services.facturacion_service import FacturacionService
 from services.gastos_service import actualizar_subtotal_caja_por_registro_pago
 from services.supabase_client import supabase
 
+DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"
+
 
 class RegistroPagoComprobanteService:
     BUCKET_NAME = "COMPROBANTE"
@@ -109,12 +111,40 @@ class RegistroPagoComprobanteService:
             except Exception as exc_ventas:
                 print(f"[registro_pago] WARN no se pudieron cargar ventas recientes: {exc_ventas}")
 
-            registro_insert = supabase.table("registro_pago").insert({
-                "fecha": hoy,
-                "total": total,
-                "documento": documento_url,
-            }).execute()
-            registro = (registro_insert.data or [None])[0]
+            registro_objetivo_id = None
+            registro = None
+            if registro_pago_id:
+                try:
+                    registro_existente = (
+                        supabase.table("registro_pago")
+                        .select("id_registro")
+                        .eq("id_registro", registro_pago_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if registro_existente.data:
+                        registro_actualizado = (
+                            supabase.table("registro_pago")
+                            .update({
+                                "fecha": hoy,
+                                "total": total,
+                                "documento": documento_url,
+                            })
+                            .eq("id_registro", registro_pago_id)
+                            .execute()
+                        )
+                        registro = (registro_actualizado.data or [None])[0]
+                        registro_objetivo_id = registro_pago_id
+                except Exception as exc_reg_upd:
+                    print(f"[registro_pago] WARN no se pudo actualizar registro_pago existente: {exc_reg_upd}")
+
+            if not registro:
+                registro_insert = supabase.table("registro_pago").insert({
+                    "fecha": hoy,
+                    "total": total,
+                    "documento": documento_url,
+                }).execute()
+                registro = (registro_insert.data or [None])[0]
 
             if not registro:
                 return {
@@ -122,7 +152,32 @@ class RegistroPagoComprobanteService:
                     "message": "PDF guardado pero no se pudo registrar en tabla registro_pago"
                 }
 
-            registro_objetivo_id = registro.get("id_registro")
+            registro_objetivo_id = registro_objetivo_id or registro.get("id_registro")
+
+            # Crear notificación de pago / registro
+            try:
+                cliente_nombre = "Cliente"
+                cli = supabase.table("cliente").select("nombre").eq("id_cliente", cliente_id).limit(1).execute()
+                if cli and cli.data:
+                    cliente_nombre = cli.data[0].get("nombre") or cliente_nombre
+
+                primera_venta_id = None
+                for row in (ventas_recientes_cliente or []):
+                    if row.get("id_venta"):
+                        primera_venta_id = row.get("id_venta")
+                        break
+
+                descripcion_notif = f"Pago registrado: S/ {total:.2f} - {hoy}"
+                notif_payload = {
+                    "nombre": cliente_nombre,
+                    "descripcion": f"{descripcion_notif} (Carrito: {carrito_ref or 'N/A'})",
+                    "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID,
+                    "tipo": "entrega",
+                    "venta_id": primera_venta_id,
+                }
+                supabase.table("notificacion").insert(notif_payload).execute()
+            except Exception as exc_notif:
+                print(f"[registro_pago] WARN no se pudo crear notificación: {exc_notif}")
 
             # ACTUALIZAR SUBTOTAL EN CAJA: Sumar todos los registro_pago del día
             # Esta función recalcula el total de registro_pago de hoy y lo registra en caja.subtotal
