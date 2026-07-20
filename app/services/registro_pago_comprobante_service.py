@@ -260,3 +260,4 @@ class RegistroPagoComprobanteService:
                 or url_obj.get("signedURL")
             )
         return getattr(url_obj, "publicUrl", None) or getattr(url_obj, "publicURL", None)
+
