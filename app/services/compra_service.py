@@ -323,7 +323,7 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "tipo": "entrega",
             "nombre": cliente["nombre"],
             "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
-            "id_cliente": cliente["id_cliente"],
+            "cliente_id": cliente["id_cliente"],
             "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID
         }
         supabase.table("notificacion").insert(notif_payload).execute()
@@ -474,7 +474,7 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "tipo": "entrega",
             "nombre": nombre_completo,
             "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
-            "id_cliente": cliente_temp["id_cliente"],
+            "cliente_id": cliente_temp["id_cliente"],
             "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID
         }
         supabase.table("notificacion").insert(notif_payload).execute()
@@ -500,4 +500,3 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "jwt_temporal": jwt_temp,
             "cliente_id": str(cliente_temp["id_cliente"])
         }
-
