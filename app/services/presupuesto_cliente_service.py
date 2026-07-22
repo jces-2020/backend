@@ -12,6 +12,9 @@ import os
 import time
 from services.supabase_client import supabase
 
+DEFAULT_CARRITO_ID = "bf95672d-cf61-460c-b826-1ee86e513141"
+DEFAULT_TIPO_VENTA_ID_SERVICIO = "8bd1ccec-bca7-46f9-bbcf-810cf8d1a929"
+
 
 def _build_jwt_temporal(cliente: Dict) -> str:
     """Genera un JWT temporal reutilizable por el panel de cliente."""
@@ -97,7 +100,7 @@ def guardar_multiples_presupuestos(
     Flujo:
       1. Buscar cliente por documento en tabla cliente
       2. Si no existe → crear cuenta temporal
-      3. Insertar cada presupuesto (cliente_id, servicio_id, descripcion, total, ancho, alto)
+      3. Insertar cada presupuesto (servicio_id, descripcion, total, ancho, alto)
       4. Crear UNA notificación con JSON: {presupuesto_ids, total_general, cantidad_servicios}
 
     Retorna:
@@ -120,9 +123,10 @@ def guardar_multiples_presupuestos(
         cliente_id     = cliente.get('id_cliente')
         nombre_cliente = cliente.get('nombre', nombre_apis.strip().upper())
 
-        # 3. Insertar cada presupuesto con el schema real de la tabla
+        # 3. Insertar cada presupuesto en la tabla presupuesto (sin cliente_id)
         pres_ids       = []
         total_general  = 0.0
+        ventas_creadas = []
 
         for pres in presupuestos_list:
             total = float(pres.get('total') or 0)
@@ -130,7 +134,6 @@ def guardar_multiples_presupuestos(
             alto_val  = pres.get('alto')
 
             pres_insert: Dict = {
-                'cliente_id':  cliente_id,
                 'servicio_id': pres['servicio_id'],
                 'descripcion': pres.get('descripcion') or pres.get('nombre_servicio') or '',
                 'total':       round(total, 2),
@@ -148,13 +151,31 @@ def guardar_multiples_presupuestos(
 
             result = supabase.table('presupuesto').insert(pres_insert).execute()
             if result.data:
-                pres_ids.append(result.data[0].get('id_presupuesto'))
-                total_general += total
+                pres_row = result.data[0]
+                pres_id = pres_row.get('id_presupuesto')
+                if pres_id:
+                    pres_ids.append(pres_id)
+                    total_general += total
+
+                    # 3.1 Crear una venta ficticia de servicio asociada al cliente encontrado
+                    venta_payload = {
+                        'cliente_id': cliente_id,
+                        'carrito_id': DEFAULT_CARRITO_ID,
+                        'cantidad': 1,
+                        'monto': round(total, 2),
+                        'metodo': 'presupuesto',
+                        'tipo_venta_id': DEFAULT_TIPO_VENTA_ID_SERVICIO,
+                        'fecha_venta': time.strftime('%Y-%m-%d'),
+                        'presupuesto_id': pres_id,
+                    }
+                    venta_res = supabase.table('venta').insert(venta_payload).execute()
+                    if venta_res.data:
+                        ventas_creadas.append(venta_res.data[0])
 
         if not pres_ids:
             return False, "No se pudieron guardar los presupuestos", [], cliente, cliente_creado, jwt_temporal
 
-        # 4. Crear una sola notificación por lote
+        # 4. Crear una sola notificación por lote vinculada a la primera venta ficticia
         meta = {
             'presupuesto_ids':    pres_ids,
             'total_general':      round(total_general, 2),
@@ -164,6 +185,7 @@ def guardar_multiples_presupuestos(
             'nombre':      nombre_cliente,
             'descripcion': json.dumps(meta),
             'tipo':        'servicio',
+            'venta_id':    ventas_creadas[0].get('id_venta') if ventas_creadas else None,
         }
         supabase.table('notificacion').insert(notif_insert).execute()
 

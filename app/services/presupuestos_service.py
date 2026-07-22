@@ -43,8 +43,6 @@ def guardar_presupuesto(data: Dict) -> Dict:
             'igv': igv_val,
             'total': total_val
         }
-        if cliente_id:
-            presupuesto['cliente_id'] = cliente_id
 
         # insertar en la tabla singular
         result = supabase.table('presupuesto') \
