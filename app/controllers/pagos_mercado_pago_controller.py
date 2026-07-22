@@ -1246,4 +1246,3 @@ def confirmar_compra():
             "success": False,
             "message": f"Error procesando compra: {str(e)}"
         }), 500
-
