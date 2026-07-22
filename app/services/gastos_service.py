@@ -4,9 +4,28 @@ Consulta Supabase para obtener gastos e ingresos del día.
 """
 
 from typing import Dict, List, Any, Optional
-from datetime import date
+from datetime import date, timedelta
 
 from services.supabase_client import supabase
+
+
+def _obtener_caja_activa(fecha: str) -> Optional[Dict[str, Any]]:
+    """Devuelve la caja abierta más reciente para una fecha determinada."""
+    try:
+        result = (
+            supabase.table("caja")
+            .select("id_caja, fecha, turno, subtotal")
+            .eq("fecha", fecha)
+            .neq("turno", "cerrada")
+            .order("id_caja", desc=True)
+            .limit(1)
+            .execute()
+        )
+        cajas = result.data or []
+        return cajas[0] if cajas else None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[_obtener_caja_activa] Error: {exc}")
+        return None
 
 
 def get_gastos_by_date(fecha: str) -> List[Dict[str, Any]]:
@@ -114,54 +133,53 @@ def get_resumen_dia(fecha: str) -> Dict[str, Any]:
 
 def actualizar_subtotal_caja_por_registro_pago(fecha: str) -> bool:
     """
-    Actualiza el subtotal en la tabla caja sumando todos los registro_pago de la fecha especificada.
-    Se ejecuta cada vez que se registra un nuevo pago.
-    
-    Flujo:
-    1. Obtiene todos los registro_pago de la fecha
-    2. Suma los totales
-    3. Si existe caja para esa fecha, actualiza el subtotal
-    4. Si no existe, crea un nuevo registro con el subtotal
-    
-    Retorna True si la operación fue exitosa, False en caso contrario.
+    Actualiza el subtotal de la caja activa del día usando solo las ventas vinculadas a esa caja.
+    Esto evita que una caja nueva herede el subtotal de la caja cerrada anterior.
     """
     try:
-        # 1. Sumar todos los registro_pago de la fecha
-        registros = supabase.table("registro_pago").select(
-            "id_registro, total"
-        ).eq("fecha", fecha).execute()
-        
-        registros_list = registros.data or []
-        total_dia = sum(float(r.get("total", 0) or 0) for r in registros_list)
-        
-        print(f"[actualizar_subtotal_caja] Fecha: {fecha}, Total registro_pago: S/ {total_dia:.2f}, Registros: {len(registros_list)}")
-        
-        # 2. Buscar si existe caja activa para esa fecha
-        caja_result = supabase.table("caja").select(
-            "id_caja, subtotal, turno"
-        ).eq("fecha", fecha).neq("turno", "cerrada").order("id_caja", desc=True).limit(1).execute()
+        fecha_inicio = date.fromisoformat(fecha)
+        fecha_fin = (fecha_inicio + timedelta(days=1)).isoformat()
 
-        cajas = caja_result.data or []
+        caja_actual = _obtener_caja_activa(fecha)
+        if not caja_actual or not caja_actual.get("id_caja"):
+            print(f"[actualizar_subtotal_caja] No existe caja activa para {fecha}")
+            return False
 
-        if cajas:
-            caja_actual = cajas[0]
-            print(f"[actualizar_subtotal_caja] Actualizando caja existente (id: {caja_actual.get('id_caja')})")
+        caja_id_actual = caja_actual.get("id_caja")
 
-            supabase.table("caja").update({
-                "subtotal": round(total_dia, 2)
-            }).eq("id_caja", caja_actual.get("id_caja")).execute()
+        ventas_res = (
+            supabase.table("venta")
+            .select("id_venta, registro_pago_id, monto, caja_id")
+            .gte("fecha_venta", fecha)
+            .lt("fecha_venta", fecha_fin)
+            .eq("caja_id", caja_id_actual)
+            .execute()
+        )
+        ventas = ventas_res.data or []
+        registro_ids = [row.get("registro_pago_id") for row in ventas if row.get("registro_pago_id")]
+
+        total_caja = 0.0
+        if registro_ids:
+            registros = (
+                supabase.table("registro_pago")
+                .select("id_registro, total")
+                .in_("id_registro", registro_ids)
+                .execute()
+            )
+            registros_list = registros.data or []
+            total_caja = sum(float(r.get("total", 0) or 0) for r in registros_list)
         else:
-            print(f"[actualizar_subtotal_caja] Creando nuevo registro de caja para {fecha}")
+            total_caja = sum(float(v.get("monto", 0) or 0) for v in ventas)
 
-            supabase.table("caja").insert({
-                "fecha": fecha,
-                "turno": "diurno",
-                "subtotal": round(total_dia, 2)
-            }).execute()
-        
-        print(f"[actualizar_subtotal_caja] OK - Subtotal actualizado a S/ {total_dia:.2f}")
+        print(f"[actualizar_subtotal_caja] Fecha: {fecha}, Caja activa: {caja_id_actual}, Total caja: S/ {total_caja:.2f}, Ventas: {len(ventas)}")
+
+        supabase.table("caja").update({
+            "subtotal": round(total_caja, 2)
+        }).eq("id_caja", caja_id_actual).execute()
+
+        print(f"[actualizar_subtotal_caja] OK - Subtotal actualizado a S/ {total_caja:.2f}")
         return True
-        
+
     except Exception as exc:  # noqa: BLE001
         print(f"[actualizar_subtotal_caja] ERROR: {exc}")
         import traceback

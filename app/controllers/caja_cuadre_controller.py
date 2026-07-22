@@ -45,7 +45,10 @@ def obtener_payload_cuadre_caja(fecha=None):
     fecha_inicio = date.fromisoformat(fecha)
     fecha_fin = (fecha_inicio + timedelta(days=1)).isoformat()
 
-    # 1. TRAER TODAS LAS VENTAS DEL DÍA CON TIPO_VENTA_ID
+    caja_actual = _obtener_caja_activa(fecha)
+    caja_id_actual = caja_actual.get("id_caja") if caja_actual else None
+
+    # 1. TRAER SOLO LAS VENTAS ENLAZADAS A LA CAJA ACTIVA DEL DÍA
     ventas_por_tipo = {}
     totales_por_tipo = {}
     comprobantes = []
@@ -54,12 +57,15 @@ def obtener_payload_cuadre_caja(fecha=None):
     try:
         result_ventas = (
             supabase.table("venta")
-            .select("id_venta, monto, metodo, cliente_id, registro_pago_id, fecha_venta, tipo_venta_id")
+            .select("id_venta, monto, metodo, cliente_id, registro_pago_id, fecha_venta, tipo_venta_id, caja_id")
             .gte("fecha_venta", fecha)
             .lt("fecha_venta", fecha_fin)
-            .order("fecha_venta", desc=True)
-            .execute()
         )
+
+        if caja_id_actual:
+            result_ventas = result_ventas.eq("caja_id", caja_id_actual)
+
+        result_ventas = result_ventas.order("fecha_venta", desc=True).execute()
         ventas = result_ventas.data or []
 
         # Agrupar ventas por tipo_venta_id
