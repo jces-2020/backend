@@ -136,29 +136,27 @@ def actualizar_subtotal_caja_por_registro_pago(fecha: str) -> bool:
         
         print(f"[actualizar_subtotal_caja] Fecha: {fecha}, Total registro_pago: S/ {total_dia:.2f}, Registros: {len(registros_list)}")
         
-        # 2. Buscar si existe caja para esa fecha
+        # 2. Buscar si existe caja activa para esa fecha
         caja_result = supabase.table("caja").select(
             "id_caja, subtotal, turno"
-        ).eq("fecha", fecha).limit(1).execute()
-        
+        ).eq("fecha", fecha).neq("turno", "cerrada").order("id_caja", desc=True).limit(1).execute()
+
         cajas = caja_result.data or []
-        
+
         if cajas:
-            # Existe caja para la fecha: actualizar subtotal
             caja_actual = cajas[0]
             print(f"[actualizar_subtotal_caja] Actualizando caja existente (id: {caja_actual.get('id_caja')})")
-            
+
             supabase.table("caja").update({
-                "subtotal": total_dia
+                "subtotal": round(total_dia, 2)
             }).eq("id_caja", caja_actual.get("id_caja")).execute()
         else:
-            # No existe caja para la fecha: crear una nueva
             print(f"[actualizar_subtotal_caja] Creando nuevo registro de caja para {fecha}")
-            
+
             supabase.table("caja").insert({
                 "fecha": fecha,
                 "turno": "diurno",
-                "subtotal": total_dia
+                "subtotal": round(total_dia, 2)
             }).execute()
         
         print(f"[actualizar_subtotal_caja] OK - Subtotal actualizado a S/ {total_dia:.2f}")

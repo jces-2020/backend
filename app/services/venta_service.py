@@ -22,24 +22,30 @@ def registrar_venta(total: float, metodo: str, caja_id: Optional[str] = None) ->
     if not venta_ok:
         return False
     
-    # 2. Actualizar tabla caja: buscar registro de hoy
+    # 2. Actualizar tabla caja: usar la caja activa del día
     try:
-        caja_res = supabase.table("caja").select("*").eq("fecha", fecha_actual).execute()
+        caja_res = (
+            supabase.table("caja")
+            .select("id_caja, subtotal, turno")
+            .eq("fecha", fecha_actual)
+            .neq("turno", "cerrada")
+            .order("id_caja", desc=True)
+            .limit(1)
+            .execute()
+        )
         cajas = caja_res.data or []
-        
+
         if cajas:
-            # Existe registro de caja para hoy: actualizar sumando el total
             caja_actual = cajas[0]
             nuevo_subtotal = float(caja_actual.get("subtotal") or 0) + total
             supabase.table("caja").update({
-                "subtotal": nuevo_subtotal
+                "subtotal": round(nuevo_subtotal, 2)
             }).eq("id_caja", caja_actual["id_caja"]).execute()
         else:
-            # No existe registro de caja para hoy: crear uno nuevo
             supabase.table("caja").insert({
                 "fecha": fecha_actual,
-                "turno": "diurno",  # Valor por defecto
-                "subtotal": total
+                "turno": "diurno",
+                "subtotal": round(total, 2)
             }).execute()
     except Exception as exc:
         print(f"[venta_service] Error actualizando tabla caja: {exc}")

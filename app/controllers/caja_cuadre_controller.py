@@ -6,6 +6,25 @@ from services.supabase_client import supabase
 
 caja_cuadre_bp = Blueprint("caja_cuadre_bp", __name__)
 
+def _obtener_caja_activa(fecha):
+    """Devuelve la caja abierta más reciente de una fecha o None si no existe."""
+    try:
+        result = (
+            supabase.table("caja")
+            .select("id_caja, fecha, turno, subtotal")
+            .eq("fecha", fecha)
+            .neq("turno", "cerrada")
+            .order("id_caja", desc=True)
+            .limit(1)
+            .execute()
+        )
+        cajas = result.data or []
+        return cajas[0] if cajas else None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[_obtener_caja_activa] Error: {exc}")
+        return None
+
+
 def _normalizar_metodo_pago(raw):
     metodo = " ".join(str(raw or "").strip().lower().split())
     if (
@@ -145,19 +164,10 @@ def obtener_payload_cuadre_caja(fecha=None):
     cantidad_en_caja = 0.0
     caja_id_actual = None
     try:
-        result_caja = (
-            supabase.table("caja")
-            .select("id_caja, subtotal")
-            .eq("fecha", fecha)
-            .neq("turno", "cerrada")  # Excluir cajas cerradas
-            .order("id_caja", desc=True)  # Obtener la mas reciente
-            .limit(1)
-            .execute()
-        )
-        cajas = result_caja.data or []
-        if cajas:
-            caja_id_actual = cajas[0].get("id_caja")
-            cantidad_en_caja = float(cajas[0].get("subtotal") or 0)
+        caja_actual = _obtener_caja_activa(fecha)
+        if caja_actual:
+            caja_id_actual = caja_actual.get("id_caja")
+            cantidad_en_caja = float(caja_actual.get("subtotal") or 0)
     except Exception as exc:  # noqa: BLE001
         print(f"[caja_cuadre] error consultando caja: {exc}")
 
@@ -221,21 +231,9 @@ def sumar_a_caja():
 
         monto = float(monto)
         fecha_hoy = date.today().isoformat()
+        caja_actual = _obtener_caja_activa(fecha_hoy)
 
-        # Buscar caja activa del dia (no cerrada)
-        caja_res = (
-            supabase.table("caja")
-            .select("id_caja, subtotal")
-            .eq("fecha", fecha_hoy)
-            .neq("turno", "cerrada")
-            .order("id_caja", desc=True)
-            .limit(1)
-            .execute()
-        )
-        cajas = caja_res.data or []
-
-        if cajas:
-            caja_actual = cajas[0]
+        if caja_actual:
             nuevo_subtotal = float(caja_actual.get("subtotal") or 0) + monto
             supabase.table("caja").update({
                 "subtotal": round(nuevo_subtotal, 2)
@@ -253,6 +251,40 @@ def sumar_a_caja():
     except Exception as exc:
         print(f"[sumar_a_caja] Error: {exc}")
         return jsonify({"success": False, "message": f"Error al actualizar caja: {str(exc)}"}), 500
+
+
+@caja_cuadre_bp.route("/api/caja/abrir", methods=["POST"])
+def abrir_caja_si_falta():
+    """Asegura que exista una caja activa para el día actual."""
+    try:
+        fecha_actual = date.today().isoformat()
+        data = request.get_json() or {}
+        turno = data.get("turno", "diurno")
+
+        caja_actual = _obtener_caja_activa(fecha_actual)
+        if caja_actual:
+            return jsonify({
+                "success": True,
+                "message": "Caja ya abierta para hoy",
+                "caja": caja_actual,
+            }), 200
+
+        nueva_caja = supabase.table("caja").insert({
+            "fecha": fecha_actual,
+            "turno": turno,
+            "subtotal": 0.0,
+        }).execute()
+
+        caja_creada = (nueva_caja.data or [{}])[0]
+        return jsonify({
+            "success": True,
+            "message": "Caja abierta correctamente",
+            "caja": caja_creada,
+        }), 201
+
+    except Exception as exc:
+        print(f"[abrir_caja_si_falta] Error: {exc}")
+        return jsonify({"success": False, "message": f"Error al abrir caja: {str(exc)}"}), 500
 
 
 @caja_cuadre_bp.route("/api/caja/crear-nueva", methods=["POST"])
