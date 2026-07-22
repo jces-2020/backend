@@ -290,49 +290,54 @@ def abrir_caja_si_falta():
 @caja_cuadre_bp.route("/api/caja/crear-nueva", methods=["POST"])
 def crear_nueva_caja():
     """
-    Cierra la caja actual del dia y crea una nueva caja con subtotal = 0.
-    Este endpoint finaliza la caja actual y prepara para un nuevo turno.
+    Cierra la caja activa del día y crea una nueva con subtotal = 0.
+    El flujo es útil para el cierre de turno de caja en una empresa.
     """
     try:
         fecha_actual = date.today().isoformat()
         data = request.get_json() or {}
-        turno = data.get("turno", "diurno")  # Puede ser "diurno", "nocturno", etc.
-        
-        # 1. Buscar la caja actual del dia
-        result_caja_actual = (
-            supabase.table("caja")
-            .select("id_caja, subtotal")
-            .eq("fecha", fecha_actual)
-            .execute()
-        )
-        cajas_actuales = result_caja_actual.data or []
-        
-        if cajas_actuales:
-            # Actualizar turno de la caja actual (marcarla como "cerrada" o cambiar turno)
-            caja_anterior = cajas_actuales[0]
+        turno = (data.get("turno") or "diurno").strip() or "diurno"
+        caja_id_actual = data.get("caja_id")
+
+        caja_activa = _obtener_caja_activa(fecha_actual)
+        caja_anterior = None
+
+        if caja_id_actual:
+            caja_res = (
+                supabase.table("caja")
+                .select("id_caja, fecha, turno, subtotal")
+                .eq("id_caja", caja_id_actual)
+                .execute()
+            )
+            caja_anterior = (caja_res.data or [{}])[0]
+        elif caja_activa:
+            caja_anterior = caja_activa
+
+        if caja_anterior and caja_anterior.get("id_caja"):
             supabase.table("caja").update({
-                "turno": "cerrada"  # Marcar como cerrada
+                "turno": "cerrada"
             }).eq("id_caja", caja_anterior["id_caja"]).execute()
-        
-        # 2. Crear nueva caja con subtotal = 0
+
         nueva_caja = supabase.table("caja").insert({
             "fecha": fecha_actual,
             "turno": turno,
             "subtotal": 0.0
         }).execute()
-        
-        if nueva_caja.data:
+
+        nueva_caja_data = (nueva_caja.data or [{}])[0]
+        if nueva_caja_data:
             return jsonify({
                 "success": True,
                 "message": "Nueva caja creada exitosamente",
-                "nueva_caja": nueva_caja.data[0] if nueva_caja.data else {}
+                "caja_anterior": caja_anterior,
+                "nueva_caja": nueva_caja_data,
             }), 200
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Error al crear nueva caja"
-            }), 500
-            
+
+        return jsonify({
+            "success": False,
+            "message": "Error al crear nueva caja"
+        }), 500
+
     except Exception as exc:
         print(f"[crear_nueva_caja] Error: {exc}")
         return jsonify({
