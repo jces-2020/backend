@@ -90,50 +90,72 @@ def resumen_gastos():
 
 @gastos_diarios_bp.route("/api/caja/retiro", methods=["POST"])
 def registrar_retiro():
-    """Registra un retiro de caja como gasto tipo 'Retiro' y actualiza el subtotal de caja."""
-    data = request.get_json()
+    """Registra un retiro de caja como gasto tipo 'Retiro' y actualiza el subtotal de la caja asociada."""
+    data = request.get_json() or {}
     monto = data.get("monto")
     usuario = data.get("usuario")
-    
-    if not monto or monto <= 0:
+    caja_id = data.get("caja_id")
+
+    if not monto or float(monto) <= 0:
         return jsonify({"success": False, "message": "Monto inválido"}), 400
-    
+
     fecha_hoy = str(date.today())
-    
-    # 1. Registrar retiro como gasto con tipo "Retiro"
-    gasto = create_gasto(
-        monto=float(monto),
-        fecha=fecha_hoy,
-        caja_id=None,
-        tipo="Retiro"
-    )
-    
-    if not gasto:
-        return jsonify({"success": False, "message": "Error al registrar retiro"}), 500
-    
-    # 2. Actualizar tabla caja: restar el monto del subtotal
+
     try:
         from services.supabase_client import supabase
-        caja_res = supabase.table("caja").select("*").eq("fecha", fecha_hoy).execute()
-        cajas = caja_res.data or []
-        
-        if cajas:
-            # Existe registro de caja para hoy: actualizar restando el monto
-            caja_actual = cajas[0]
-            nuevo_subtotal = float(caja_actual.get("subtotal") or 0) - float(monto)
+
+        caja_target = None
+        if caja_id:
+            caja_res = (
+                supabase.table("caja")
+                .select("id_caja, subtotal, fecha, turno")
+                .eq("id_caja", caja_id)
+                .execute()
+            )
+            caja_target = (caja_res.data or [{}])[0]
+
+        if not caja_target:
+            caja_res = (
+                supabase.table("caja")
+                .select("id_caja, subtotal, fecha, turno")
+                .eq("fecha", fecha_hoy)
+                .neq("turno", "cerrada")
+                .order("id_caja", desc=True)
+                .limit(1)
+                .execute()
+            )
+            cajas = caja_res.data or []
+            caja_target = cajas[0] if cajas else None
+
+        caja_target_id = caja_target.get("id_caja") if caja_target else None
+
+        # 1. Registrar retiro como gasto con tipo "Retiro" vinculando la caja activa
+        gasto = create_gasto(
+            monto=float(monto),
+            fecha=fecha_hoy,
+            caja_id=caja_target_id,
+            tipo="Retiro"
+        )
+
+        if not gasto:
+            return jsonify({"success": False, "message": "Error al registrar retiro"}), 500
+
+        # 2. Actualizar tabla caja: restar el monto del subtotal de la caja vinculada
+        if caja_target_id:
+            nuevo_subtotal = float(caja_target.get("subtotal") or 0) - float(monto)
             supabase.table("caja").update({
-                "subtotal": nuevo_subtotal
-            }).eq("id_caja", caja_actual["id_caja"]).execute()
+                "subtotal": round(nuevo_subtotal, 2)
+            }).eq("id_caja", caja_target_id).execute()
         else:
-            # No existe registro de caja para hoy: crear uno con monto negativo
             supabase.table("caja").insert({
                 "fecha": fecha_hoy,
                 "turno": "diurno",
-                "subtotal": -float(monto)
+                "subtotal": round(-float(monto), 2)
             }).execute()
+
     except Exception as exc:
         print(f"[registrar_retiro] Error actualizando tabla caja: {exc}")
-        # No fallar el retiro si hay error en caja
+        return jsonify({"success": False, "message": "Error al registrar retiro"}), 500
 
     # 3. Actualizar saldo acumulado en tabla pago (resta por retiro)
     try:
@@ -144,5 +166,9 @@ def registrar_retiro():
     return jsonify({
         "success": True,
         "message": f"Retiro de S/ {monto} registrado correctamente",
-        "data": gasto
+        "data": {
+            "gasto": gasto,
+            "caja_id": caja_target_id,
+            "usuario": usuario,
+        }
     })

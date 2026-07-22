@@ -143,6 +143,7 @@ def obtener_payload_cuadre_caja(fecha=None):
 
     # 2. CANTIDAD EN CAJA: TRAER DE TABLA CAJA SUBTOTAL
     cantidad_en_caja = 0.0
+    caja_id_actual = None
     try:
         result_caja = (
             supabase.table("caja")
@@ -155,6 +156,7 @@ def obtener_payload_cuadre_caja(fecha=None):
         )
         cajas = result_caja.data or []
         if cajas:
+            caja_id_actual = cajas[0].get("id_caja")
             cantidad_en_caja = float(cajas[0].get("subtotal") or 0)
     except Exception as exc:  # noqa: BLE001
         print(f"[caja_cuadre] error consultando caja: {exc}")
@@ -188,6 +190,7 @@ def obtener_payload_cuadre_caja(fecha=None):
         "totales_por_tipo": totales_por_tipo,
         "comprobantes": comprobantes,
         "cantidad_en_caja": cantidad_en_caja,
+        "caja_id": caja_id_actual,
         "retiros": retiros,
     }
 
