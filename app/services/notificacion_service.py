@@ -110,7 +110,7 @@ def crear_notificacion(datos: Dict[str, Any]) -> Dict[str, Any]:
             'descripcion': datos.get('descripcion'),
             'tipo': datos.get('tipo'),
             'estado_notificacion_id': datos.get('estado_notificacion_id'),
-            'id_cliente': datos.get('id_cliente'),
+            'venta_id': datos.get('venta_id'),
         }
         payload = {k: v for k, v in payload.items() if v is not None}
 
@@ -124,15 +124,11 @@ def crear_notificacion(datos: Dict[str, Any]) -> Dict[str, Any]:
 
         notificacion = (data[0] if isinstance(data, list) and data else data) or {}
 
-        nombre_cliente = None
-        if datos.get('id_cliente'):
-            nombre_cliente = _obtener_nombre_cliente(datos['id_cliente'])
-
         notificar_nuevo_servicio(
             nombre=notificacion.get('nombre') or datos.get('nombre'),
             descripcion=notificacion.get('descripcion') or datos.get('descripcion'),
             tipo=notificacion.get('tipo') or datos.get('tipo'),
-            nombre_cliente=nombre_cliente,
+            nombre_cliente=datos.get('nombre'),
             id_notificacion=str(notificacion.get('id_notificacion', '')),
         )
 
@@ -150,6 +146,7 @@ def obtener_notificaciones(
     estado_id: Optional[str] = None,
     id_cliente: Optional[str] = None,
     tipo: Optional[str] = None,
+    venta_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Lista notificaciones con filtros opcionales."""
     try:
@@ -157,8 +154,8 @@ def obtener_notificaciones(
 
         if estado_id:
             query = query.eq('estado_notificacion_id', estado_id)
-        if id_cliente:
-            query = query.eq('id_cliente', id_cliente)
+        if venta_id:
+            query = query.eq('venta_id', venta_id)
         if tipo:
             query = query.eq('tipo', tipo)
 

@@ -10,6 +10,7 @@ import time
 import re
 
 # Constante para tipo de venta de productos
+DEFAULT_CARRITO_ID = "bf95672d-cf61-460c-b826-1ee86e513141"
 DEFAULT_TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
 DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"
 
@@ -114,8 +115,8 @@ def _guardar_lineas_venta(
     carrito_id: str,
     cliente_id: str,
     metodo_pago: str,
-) -> float:
-    """Guarda líneas de venta en la tabla venta y retorna el total calculado."""
+) -> Dict[str, Any]:
+    """Guarda líneas de venta en la tabla venta y retorna total + id de ventas creadas."""
     total_venta = 0.0
     lineas = []
 
@@ -169,10 +170,15 @@ def _guardar_lineas_venta(
             "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
         })
 
+    venta_ids = []
     if lineas:
-        supabase.table("venta").insert(lineas).execute()
+        insert_res = supabase.table("venta").insert(lineas).execute()
+        venta_ids = [str(v.get("id_venta")) for v in (insert_res.data or []) if v.get("id_venta")]
 
-    return round(total_venta, 2)
+    return {
+        "total": round(total_venta, 2),
+        "venta_ids": venta_ids,
+    }
 
     for corte in (cortes_payload or []):
         pid = str(corte.get("producto_id") or "").strip()
@@ -253,14 +259,20 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
     
     # Si existe cliente
     if cliente:
-        # 1. Crear carrito_compras (sin cliente_id, ese dato va en venta)
-        carrito_payload = {
-            "estado": "inicio"
-        }
-        carrito_res = supabase.table("carrito_compras").insert(carrito_payload).execute()
-        if not carrito_res.data:
-            return False
-        id_carrito = carrito_res.data[0]["id_carrito"]
+        # 1. Resolver carrito_compras de progreso (id fijo para barra)
+        carrito_existente = supabase.table("carrito_compras").select("id_carrito").eq("id_carrito", DEFAULT_CARRITO_ID).limit(1).execute()
+        if carrito_existente.data:
+            id_carrito = carrito_existente.data[0]["id_carrito"]
+            supabase.table("carrito_compras").update({"estado": "inicio"}).eq("id_carrito", id_carrito).execute()
+        else:
+            carrito_payload = {
+                "id_carrito": DEFAULT_CARRITO_ID,
+                "estado": "inicio"
+            }
+            carrito_res = supabase.table("carrito_compras").insert(carrito_payload).execute()
+            if not carrito_res.data:
+                return False
+            id_carrito = carrito_res.data[0]["id_carrito"]
         
         # 2. Consolidar productos para guardarlos luego en venta
         # Consolidar por producto_id para evitar conflicto de PK compuesta
@@ -318,28 +330,31 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
 
         _descontar_stock_productos(productos_agrupados, cortes_payload)
         
-        # 4. Crear notificacion
-        notif_payload = {
-            "tipo": "entrega",
-            "nombre": cliente["nombre"],
-            "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
-            "cliente_id": cliente["id_cliente"],
-            "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID
-        }
-        supabase.table("notificacion").insert(notif_payload).execute()
-        
-        # 5. Guardar líneas de venta con el detalle real
+        # 4. Guardar líneas de venta con el detalle real primero
         try:
-            total_venta = _guardar_lineas_venta(
+            venta_result = _guardar_lineas_venta(
                 productos_agrupados=productos_agrupados,
                 cortes_payload=cortes_payload,
                 carrito_id=id_carrito,
                 cliente_id=cliente["id_cliente"],
                 metodo_pago=metodo_normalizado,
             )
+            total_venta = venta_result.get("total", 0.0)
+            primera_venta_id = (venta_result.get("venta_ids") or [None])[0]
             print(f"[COMPRA_SERVICE] Total venta: S/ {total_venta:.2f}, Metodo: {metodo_normalizado}")
         except Exception as e:
             print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
+            return {"ok": False, "error": str(e)}
+
+        # 5. Crear notificacion vinculada a la venta creada
+        notif_payload = {
+            "tipo": "entrega",
+            "nombre": cliente["nombre"],
+            "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
+            "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID,
+            "venta_id": primera_venta_id,
+        }
+        supabase.table("notificacion").insert(notif_payload).execute()
 
         return {"ok": True, "cuenta_temporal": False}
     else:
@@ -469,28 +484,31 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             supabase.table("cortes").insert(db_cortes).execute()
 
         _descontar_stock_productos(productos_agrupados, cortes_payload)
-        # 4. Crear notificacion (nombre especial)
-        notif_payload = {
-            "tipo": "entrega",
-            "nombre": nombre_completo,
-            "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
-            "cliente_id": cliente_temp["id_cliente"],
-            "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID
-        }
-        supabase.table("notificacion").insert(notif_payload).execute()
-        
-        # 5. Calcular total y registrar venta
+        # 4. Calcular total y registrar venta primero
         try:
-            total_venta = _guardar_lineas_venta(
+            venta_result = _guardar_lineas_venta(
                 productos_agrupados=productos_agrupados,
                 cortes_payload=cortes_payload,
                 carrito_id=id_carrito,
                 cliente_id=cliente_temp["id_cliente"],
                 metodo_pago=metodo_normalizado,
             )
+            total_venta = venta_result.get("total", 0.0)
+            primera_venta_id = (venta_result.get("venta_ids") or [None])[0]
             print(f"[COMPRA_SERVICE] Total venta: S/ {total_venta:.2f}, Metodo: {metodo_normalizado}")
         except Exception as e:
             print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
+            return {"ok": False, "error": str(e)}
+
+        # 5. Crear notificacion vinculada a la venta creada
+        notif_payload = {
+            "tipo": "entrega",
+            "nombre": nombre_completo,
+            "descripcion": f"{nombres_productos} (Carrito: {id_carrito})",
+            "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID,
+            "venta_id": primera_venta_id,
+        }
+        supabase.table("notificacion").insert(notif_payload).execute()
 
         return {
             "ok": True,

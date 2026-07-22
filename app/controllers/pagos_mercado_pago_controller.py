@@ -22,7 +22,7 @@ pagos_mp_bp = Blueprint("pagos_mp", __name__)
 bp = pagos_mp_bp  # alias para auto-registro del factory
 
 # IDs fijos de negocio para el nuevo flujo
-DEFAULT_CARRITO_ID = "2ca0f029-e8b0-4f8a-8e5e-e2ac279f957d"
+DEFAULT_CARRITO_ID = "bf95672d-cf61-460c-b826-1ee86e513141"
 DEFAULT_TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
 DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"
 
@@ -1246,3 +1246,4 @@ def confirmar_compra():
             "success": False,
             "message": f"Error procesando compra: {str(e)}"
         }), 500
+

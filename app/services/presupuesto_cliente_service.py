@@ -163,7 +163,6 @@ def guardar_multiples_presupuestos(
         notif_insert = {
             'nombre':      nombre_cliente,
             'descripcion': json.dumps(meta),
-            'id_cliente':  cliente_id,
             'tipo':        'servicio',
         }
         supabase.table('notificacion').insert(notif_insert).execute()
