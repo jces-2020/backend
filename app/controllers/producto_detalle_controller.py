@@ -55,7 +55,6 @@ def get_detalle(producto_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-
 @producto_detalle_bp.route('/api/productos/<producto_id>/detalle', methods=['POST'])
 def upsert_detalle(producto_id):
     try:
