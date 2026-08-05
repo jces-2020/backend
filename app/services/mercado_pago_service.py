@@ -19,6 +19,32 @@ _SENSITIVE_KEYS = {
 }
 
 
+def _classify_mp_error(status_http, error_code, blocked_by, error_msg):
+    """Clasifica el rechazo de Mercado Pago para diagnostico interno.
+
+    Evidencia (código fuente oficial mercadopago/sdk-python 2.2.1,
+    mercadopago/config/request_options.py::get_headers): Authorization,
+    Content-Type y x-idempotency-key se arman correctamente siempre que el
+    SDK tenga un access_token configurado -> un PA_UNAUTHORIZED_RESULT_FROM_POLICIES
+    con blocked_by=PolicyAgent NO es un header faltante, es el motor de
+    riesgo/cumplimiento de la cuenta rechazando la operación puntual.
+    """
+    code = (error_code or "").upper()
+    msg = (error_msg or "").lower()
+
+    if blocked_by == "PolicyAgent" or code.startswith("PA_"):
+        return "CONFIGURATION_ERROR"
+    if status_http in (401, 403):
+        return "AUTHENTICATION_ERROR"
+    if "token" in msg and any(w in msg for w in ("invalid", "used", "expired", "not found")):
+        return "CARD_TOKEN_ERROR"
+    if any(w in msg for w in ("payment_method", "issuer", "payment method")):
+        return "PAYMENT_METHOD_ERROR"
+    if status_http == 400:
+        return "PAYMENT_REJECTED"
+    return "PROVIDER_ERROR"
+
+
 def _sanitize_for_log(value, _depth=0):
     """Redacta campos sensibles antes de loggear una respuesta de Mercado Pago."""
     if _depth > 6:
@@ -380,11 +406,29 @@ class MercadoPagoService:
                 flush=True,
             )
 
+            error_category = _classify_mp_error(result.get("status"), error_code, blocked_by, error_msg)
+
+            if error_category == "CONFIGURATION_ERROR":
+                return {
+                    "success": False,
+                    "message": (
+                        "Mercado Pago bloqueó esta operación por política de riesgo/cumplimiento "
+                        "de la cuenta (no es un error de tarjeta ni de datos ingresados)."
+                    ),
+                    "status": result.get("status"),
+                    "error": error_msg,
+                    "error_code": error_code,
+                    "blocked_by": blocked_by,
+                    "error_category": error_category,
+                    "cause": error_causes
+                }
+
             if result.get("status") == 403:
                 return {
                     "success": False,
                     "message": "Pago no autorizado por Mercado Pago (UNAUTHORIZED). Revisa las credenciales, el modo Sandbox/Production y configura la cuenta correctamente.",
                     "status": 403,
+                    "error_category": "AUTHENTICATION_ERROR",
                     "error": error_msg,
                     "cause": error_causes
                 }
@@ -414,11 +458,16 @@ class MercadoPagoService:
 
                 fallback_response = retry_result.get("response", {})
                 print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback result: {_sanitize_for_log(fallback_response)}", flush=True)
+                fallback_msg = fallback_response.get("message", error_msg)
                 return {
                     "success": False,
-                    "message": fallback_response.get("message", error_msg),
+                    "message": fallback_msg,
                     "status": retry_result.get("status"),
-                    "error": fallback_response.get("message", error_msg),
+                    "error": fallback_msg,
+                    "error_category": _classify_mp_error(
+                        retry_result.get("status"), fallback_response.get("code"),
+                        fallback_response.get("blocked_by"), fallback_msg,
+                    ),
                     "cause": fallback_response.get("cause", error_causes)
                 }
 
@@ -427,6 +476,7 @@ class MercadoPagoService:
                 "message": error_msg,
                 "status": result.get("status"),
                 "error": error_msg,
+                "error_category": error_category,
                 "cause": error_causes
             }
 

@@ -647,8 +647,8 @@ def procesar_pago():
 
         print(
             f"[PAGOS_MP] RESPONSE /api/pagos/procesar_pago -> 400 | "
-            f"status_proveedor={resultado.get('status')} error={resultado.get('error') or resultado.get('message')} "
-            f"cause={resultado.get('cause')}",
+            f"status_proveedor={resultado.get('status')} error_category={resultado.get('error_category')} "
+            f"error={resultado.get('error') or resultado.get('message')} cause={resultado.get('cause')}",
             flush=True,
         )
         return jsonify({
@@ -656,7 +656,8 @@ def procesar_pago():
             "message": resultado.get("message") or "Pago rechazado",
             "error": resultado.get("error") or resultado.get("message"),
             "cause": resultado.get("cause"),
-            "status": resultado.get("status")
+            "status": resultado.get("status"),
+            "error_category": resultado.get("error_category"),
         }), 400
 
 
