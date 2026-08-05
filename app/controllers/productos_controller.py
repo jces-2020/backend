@@ -97,8 +97,10 @@ def crear_producto():
             elif isinstance(alm_data, dict):
                 almacen_id = alm_data.get('id_almacen')
 
+        codigo = data.get('codigo')
+
         payload = {
-            'codigo':          data.get('codigo'),
+            'codigo':          codigo,
             'nombre':          data.get('nombre'),
             'cantidad':        data.get('cantidad'),
             'precio_unitario': data.get('precio_unitario'),
@@ -110,7 +112,18 @@ def crear_producto():
             'IMG_P':           data.get('IMG_P') or data.get('imagen_url'),
         }
 
-        resp = supabase.table('productos').insert(payload).execute()
+        if codigo:
+            dup = supabase.table('productos').select('id_producto').eq('codigo', codigo).limit(1).execute()
+            if dup.data:
+                return jsonify({'error': f"Ya existe un producto con el código '{codigo}'"}), 409
+
+        try:
+            resp = supabase.table('productos').insert(payload).execute()
+        except Exception as insert_err:
+            if 'productos_codigo_key' in str(insert_err) or 'duplicate key' in str(insert_err).lower():
+                return jsonify({'error': f"Ya existe un producto con el código '{codigo}'"}), 409
+            raise
+
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
         return jsonify({'success': True, 'data': resp.data}), 201

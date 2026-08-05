@@ -325,8 +325,9 @@ if __name__ == "__main__":
     if quiet_http_logs:
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
+    debug_mode = os.getenv("ENVIRONMENT", "production").strip().lower() == "development"
     app.run(
         host="0.0.0.0",
         port=5000,
-        debug=True
+        debug=debug_mode
     )

@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
+import traceback
 from flask import Blueprint, jsonify, request
 from app.services.supabase_client import supabase
 
 categoria_detalle_bp = Blueprint('categoria_detalle_bp', __name__)
+
+
+def _log_error(tag, categoria_id, e):
+    print(f"[CATEGORIA_DETALLE][{tag}] categoria_id={categoria_id} error={type(e).__name__}: {e}", flush=True)
+    print(traceback.format_exc(), flush=True)
 
 
 @categoria_detalle_bp.route('/api/categorias/<categoria_id>/detalle', methods=['GET'])
@@ -18,6 +24,7 @@ def get_detalle(categoria_id):
             return jsonify({'success': True, 'data': None}), 200
         return jsonify({'success': True, 'data': data[0]}), 200
     except Exception as e:
+        _log_error('GET', categoria_id, e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -57,6 +64,7 @@ def upsert_detalle(categoria_id):
         data = resp.data[0] if resp.data else payload
         return jsonify({'success': True, 'data': data}), 200
     except Exception as e:
+        _log_error('POST', categoria_id, e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -74,4 +82,5 @@ def get_todos_detalles():
             row['categoria_nombre'] = (cat.get('descripcion') or '').upper()
         return jsonify({'success': True, 'data': data}), 200
     except Exception as e:
+        _log_error('GET /detalles', None, e)
         return jsonify({'success': False, 'error': str(e)}), 500

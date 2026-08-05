@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import traceback
 from flask import Blueprint, jsonify, request
 from app.services.supabase_client import supabase
 
@@ -53,7 +54,10 @@ def get_detalle(producto_id):
             return jsonify({'success': True, 'data': None}), 200
         return jsonify({'success': True, 'data': data[0]}), 200
     except Exception as e:
+        print(f"[PRODUCTO_DETALLE][GET] producto_id={producto_id} error={type(e).__name__}: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @producto_detalle_bp.route('/api/productos/<producto_id>/detalle', methods=['POST'])
 def upsert_detalle(producto_id):
@@ -69,4 +73,10 @@ def upsert_detalle(producto_id):
 
         return jsonify({'success': True, 'data': data}), 200
     except Exception as e:
+        print(
+            f"[PRODUCTO_DETALLE][POST] producto_id={producto_id} campos={list(payload.keys()) if 'payload' in locals() else '?'} "
+            f"error={type(e).__name__}: {e}",
+            flush=True,
+        )
+        print(traceback.format_exc(), flush=True)
         return jsonify({'success': False, 'error': str(e)}), 500

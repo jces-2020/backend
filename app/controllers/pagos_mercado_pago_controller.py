@@ -571,8 +571,14 @@ def procesar_pago():
         payer_email = data.get("payer_email")
         payer_identification = data.get("payer_identification") or {}
 
-
-
+        print(
+            f"[PAGOS_MP] REQUEST /api/pagos/procesar_pago | carrito_id={carrito_id} "
+            f"cliente_id={cliente_id} amount={amount} payment_method_id={payment_method_id} "
+            f"issuer_id={issuer_id} installments={installments} "
+            f"payer_email={'***' + payer_email[-10:] if payer_email else None} "
+            f"token_presente={bool(token_mp)}",
+            flush=True,
+        )
 
         if not carrito_id or not cliente_id or not amount or not payment_method_id or not payer_email:
             return jsonify({
@@ -639,6 +645,12 @@ def procesar_pago():
 
 
 
+        print(
+            f"[PAGOS_MP] RESPONSE /api/pagos/procesar_pago -> 400 | "
+            f"status_proveedor={resultado.get('status')} error={resultado.get('error') or resultado.get('message')} "
+            f"cause={resultado.get('cause')}",
+            flush=True,
+        )
         return jsonify({
             "success": False,
             "message": resultado.get("message") or "Pago rechazado",

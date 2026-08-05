@@ -13,6 +13,33 @@ from mercadopago import config
 
 load_dotenv()
 
+_SENSITIVE_KEYS = {
+    "token", "card", "cvv", "security_code", "securitycode", "cardnumber",
+    "card_number", "password", "access_token", "authorization",
+}
+
+
+def _sanitize_for_log(value, _depth=0):
+    """Redacta campos sensibles antes de loggear una respuesta de Mercado Pago."""
+    if _depth > 6:
+        return "..."
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if str(k).lower() in _SENSITIVE_KEYS:
+                out[k] = "***"
+            elif str(k).lower() == "email":
+                out[k] = re.sub(r"^(.).*(@.*)$", r"\1***\2", str(v)) if v else v
+            elif str(k).lower() in ("number", "identification_number") and v:
+                s = str(v)
+                out[k] = f"***{s[-3:]}" if len(s) > 3 else "***"
+            else:
+                out[k] = _sanitize_for_log(v, _depth + 1)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_for_log(v, _depth + 1) for v in value]
+    return value
+
 
 class MercadoPagoService:
 
@@ -21,7 +48,8 @@ class MercadoPagoService:
         if not access_token:
             raise ValueError("MERCADO_PAGO_ACCESS_TOKEN no configurado en .env")
 
-        print("[MP_SERVICE] SDK inicializado")
+        self.credential_env = "production" if access_token.startswith("APP_USR-") else "sandbox"
+        print(f"[MP_SERVICE] SDK inicializado | ambiente={self.credential_env}", flush=True)
         self.sdk = mercadopago.SDK(access_token)
 
     # --------------------------------------------------
@@ -265,14 +293,17 @@ class MercadoPagoService:
         payer_identification: Dict[str, str]
     ) -> Dict[str, Any]:
 
+        idem_key = str(uuid.uuid4())
         try:
             # [OK] Email acepta cualquier formato (igual que mp_test que funciona)
-            print(f"[MP_SERVICE] [CARD] Iniciando procesamiento de pago")
-            print(f"[MP_SERVICE]   Email: {payer_email}")
-            print(f"[MP_SERVICE]   Monto: {amount}")
-            print(f"[MP_SERVICE]   Metodo: {payment_method_id}")
-            print(f"[MP_SERVICE]   Cuotas: {installments}")
-            print(f"[MP_SERVICE]   Carrito: {carrito_id}")
+            print(
+                f"[MP_SERVICE][{idem_key}] [CARD] REQUEST recibido | "
+                f"ambiente={self.credential_env} carrito={carrito_id} cliente={cliente_id} "
+                f"monto={amount} payment_method_id={payment_method_id} issuer_id={issuer_id} "
+                f"installments={installments} email={_sanitize_for_log({'email': payer_email})['email']} "
+                f"token_presente={bool(token)} token_len={len(token) if token else 0}",
+                flush=True,
+            )
 
             payer_data = {
                 "email": payer_email
@@ -307,16 +338,25 @@ class MercadoPagoService:
 
             request_options = config.RequestOptions()
             request_options.custom_headers = {
-                "x-idempotency-key": str(uuid.uuid4())
+                "x-idempotency-key": idem_key
             }
 
-            print(f"[MP_SERVICE] >> Enviando a API Mercado Pago...")
+            print(
+                f"[MP_SERVICE][{idem_key}] >> Enviando a proveedor=mercadopago "
+                f"endpoint=POST /v1/payments ambiente={self.credential_env} "
+                f"payload={_sanitize_for_log(payment_data)}",
+                flush=True,
+            )
             result = self.sdk.payment().create(payment_data, request_options)
-            print(f"[MP_SERVICE] << Respuesta MP: status={result.get('status')}")
+            print(f"[MP_SERVICE][{idem_key}] << HTTP status del proveedor={result.get('status')}", flush=True)
 
             if result.get("status") == 201:
                 response = result["response"]
-                print(f"[MP_SERVICE] [OK] Pago aprobado: ID={response.get('id')}, Status={response.get('status')}")
+                print(
+                    f"[MP_SERVICE][{idem_key}] [OK] Pago aprobado | "
+                    f"response={_sanitize_for_log(response)}",
+                    flush=True,
+                )
                 return {
                     "success": True,
                     "payment_id": response.get("id"),
@@ -329,11 +369,16 @@ class MercadoPagoService:
             response_data = result.get("response", {})
             error_msg = response_data.get("message", "Rechazado sin mensaje")
             error_causes = response_data.get("cause", [])
-            
-            print(f"[MP_SERVICE] [ERROR] Pago rechazado")
-            print(f"[MP_SERVICE]    Status HTTP: {result.get('status')}")
-            print(f"[MP_SERVICE]    Error: {error_msg}")
-            print(f"[MP_SERVICE]    Causas: {error_causes}")
+            error_code = response_data.get("code")
+            blocked_by = response_data.get("blocked_by")
+
+            print(
+                f"[MP_SERVICE][{idem_key}] [ERROR] Pago rechazado | "
+                f"status_http={result.get('status')} code={error_code} blocked_by={blocked_by} "
+                f"mensaje={error_msg} causas={error_causes} "
+                f"response_completo={_sanitize_for_log(response_data)}",
+                flush=True,
+            )
 
             if result.get("status") == 403:
                 return {
@@ -349,16 +394,16 @@ class MercadoPagoService:
                 (error_msg or "").lower().strip() == "not_result_by_params" or
                 any([c.get("code") == 10102 for c in error_causes if isinstance(c, dict)])
             ):
-                print("[MP_SERVICE] [CARD] not_result_by_params detectado, reintentando sin issuer_id ni binary_mode")
+                print(f"[MP_SERVICE][{idem_key}] [CARD] not_result_by_params detectado, reintentando sin issuer_id ni binary_mode", flush=True)
                 fallback_data = payment_data.copy()
                 fallback_data.pop("issuer_id", None)
                 fallback_data.pop("binary_mode", None)
 
                 retry_result = self.sdk.payment().create(fallback_data, request_options)
-                print(f"[MP_SERVICE] [CARD] Reintento fallback status={retry_result.get('status')}")
+                print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback status={retry_result.get('status')}", flush=True)
                 if retry_result.get("status") == 201:
                     retry_response = retry_result["response"]
-                    print(f"[MP_SERVICE] [OK] Pago aprobado tras reintento fallback: ID={retry_response.get('id')}")
+                    print(f"[MP_SERVICE][{idem_key}] [OK] Pago aprobado tras reintento fallback: ID={retry_response.get('id')}", flush=True)
                     return {
                         "success": True,
                         "payment_id": retry_response.get("id"),
@@ -368,7 +413,7 @@ class MercadoPagoService:
                     }
 
                 fallback_response = retry_result.get("response", {})
-                print(f"[MP_SERVICE] [CARD] Reintento fallback result: {fallback_response}")
+                print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback result: {_sanitize_for_log(fallback_response)}", flush=True)
                 return {
                     "success": False,
                     "message": fallback_response.get("message", error_msg),
@@ -386,7 +431,7 @@ class MercadoPagoService:
             }
 
         except Exception as e:
-            print(f"[MP_SERVICE] [ERROR] Excepcion: {type(e).__name__}: {str(e)}")
+            print(f"[MP_SERVICE][{idem_key}] [ERROR] Excepcion: {type(e).__name__}: {str(e)}", flush=True)
             import traceback
             traceback.print_exc()
             return {"success": False, "message": str(e), "error": str(e)}
