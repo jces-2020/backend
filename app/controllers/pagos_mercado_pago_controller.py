@@ -13,7 +13,6 @@ from app.services.cortes_service import calcular_total_corte, es_material_alumin
 from app.services.supabase_client import supabase
 from app.services.gastos_service import actualizar_subtotal_caja_por_registro_pago
 from app.controllers.clientes_controller import verify_jwt
-import uuid
 
 
 
@@ -340,100 +339,6 @@ def _obtener_o_crear_caja_activa() -> str | None:
     except Exception as exc:
         print(f"[CONFIRMAR_COMPRA] WARN No se pudo resolver caja activa: {exc}")
         return None
-
-
-
-
-# --------------------------------------------------
-# PROCESAR PAGO TEST (MODO DESARROLLO)
-# --------------------------------------------------
-@pagos_mp_bp.route("/api/pagos/procesar_pago_test", methods=["POST"])
-def procesar_pago_test():
-    """
-    ENDPOINT PARA DESARROLLO - Simula un pago exitoso sin Mercado Pago real
-    Usar esto para probar el flujo completo sin tarjeta real
-    """
-    try:
-        print("[MP_TEST] ===== /api/pagos/procesar_pago_test =====", flush=True)
-       
-        # Validar JWT
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return jsonify({"success": False, "message": "Token no proporcionado"}), 401
-
-
-
-
-        token = auth_header.split(" ", 1)[1]
-        payload = verify_jwt(token)
-        if not payload:
-            return jsonify({"success": False, "message": "Token invalido"}), 401
-
-
-
-
-        cliente_id_token = payload.get("sub")
-
-
-
-
-        # Obtener datos
-        data = request.get_json() or {}
-        carrito_id = data.get("carrito_id")
-        cliente_id = data.get("cliente_id")
-        amount = data.get("amount")
-        payer_email = data.get("payer_email")
-
-
-
-
-        if not carrito_id or not cliente_id or not amount or not payer_email:
-            print("[MP_TEST] ERROR Datos incompletos", flush=True)
-            return jsonify({
-                "success": False,
-                "message": "Datos incompletos: carrito_id, cliente_id, amount, payer_email requeridos"
-            }), 400
-
-
-
-
-        # Validar que cliente coincida
-        if cliente_id != cliente_id_token:
-            return jsonify({"success": False, "message": "No autorizado"}), 403
-
-
-
-
-        # SIMULAR PAGO EXITOSO
-        payment_id = str(uuid.uuid4())
-       
-        print(f"[MP_TEST] TEST Simulando pago exitoso", flush=True)
-        print(f"[MP_TEST] Cliente: {cliente_id}, Monto: S/ {amount}, Email: {payer_email}", flush=True)
-        print(f"[MP_TEST] OK Payment ID simulado: {payment_id}", flush=True)
-
-
-
-
-        return jsonify({
-            "success": True,
-            "message": "Pago simulado exitosamente (MODO DESARROLLO)",
-            "payment_id": payment_id,
-            "status": "approved",
-            "status_detail": "accredited",
-            "amount": amount,
-            "userMessage": "Pago Simulado Exitoso!",
-            "userDetail": f"ID Pago: {payment_id} (DESARROLLO)"
-        }), 200
-
-
-
-
-    except Exception as e:
-        print(f"[MP_TEST] ERROR: {e}", flush=True)
-        return jsonify({
-            "success": False,
-            "message": str(e)
-        }), 500
 
 
 
