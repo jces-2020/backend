@@ -570,13 +570,14 @@ def procesar_pago():
         installments = data.get("installments", 1)
         payer_email = data.get("payer_email")
         payer_identification = data.get("payer_identification") or {}
+        device_id = data.get("device_id")
 
         print(
             f"[PAGOS_MP] REQUEST /api/pagos/procesar_pago | carrito_id={carrito_id} "
             f"cliente_id={cliente_id} amount={amount} payment_method_id={payment_method_id} "
             f"issuer_id={issuer_id} installments={installments} "
             f"payer_email={'***' + payer_email[-10:] if payer_email else None} "
-            f"token_presente={bool(token_mp)}",
+            f"token_presente={bool(token_mp)} device_id_presente={bool(device_id)}",
             flush=True,
         )
 
@@ -624,6 +625,7 @@ def procesar_pago():
                 amount=float(amount),
                 payment_method_id=payment_method_id,
                 issuer_id=issuer_id,
+                device_id=device_id,
                 installments=int(installments),
                 payer_email=payer_email,
                 payer_identification=payer_identification
@@ -1154,10 +1156,7 @@ def confirmar_compra():
             "stock_descuento": descuentos_stock,
             "stock_deltas": stock_deltas,
         }), 200
-
-
-
-
+        
     except Exception as e:
         print(f"[ERROR CONFIRMAR_COMPRA] {str(e)}")
         return jsonify({

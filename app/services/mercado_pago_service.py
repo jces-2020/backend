@@ -316,7 +316,8 @@ class MercadoPagoService:
         issuer_id: Optional[str],
         installments: int,
         payer_email: str,
-        payer_identification: Dict[str, str]
+        payer_identification: Dict[str, str],
+        device_id: Optional[str] = None,
     ) -> Dict[str, Any]:
 
         idem_key = str(uuid.uuid4())
@@ -327,7 +328,8 @@ class MercadoPagoService:
                 f"ambiente={self.credential_env} carrito={carrito_id} cliente={cliente_id} "
                 f"monto={amount} payment_method_id={payment_method_id} issuer_id={issuer_id} "
                 f"installments={installments} email={_sanitize_for_log({'email': payer_email})['email']} "
-                f"token_presente={bool(token)} token_len={len(token) if token else 0}",
+                f"token_presente={bool(token)} token_len={len(token) if token else 0} "
+                f"device_id_presente={bool(device_id)}",
                 flush=True,
             )
 
@@ -363,13 +365,15 @@ class MercadoPagoService:
                 payment_data["issuer_id"] = issuer_id
 
             request_options = config.RequestOptions()
-            request_options.custom_headers = {
-                "x-idempotency-key": idem_key
-            }
+            custom_headers = {"x-idempotency-key": idem_key}
+            if device_id:
+                custom_headers["X-meli-session-id"] = device_id
+            request_options.custom_headers = custom_headers
 
             print(
                 f"[MP_SERVICE][{idem_key}] >> Enviando a proveedor=mercadopago "
                 f"endpoint=POST /v1/payments ambiente={self.credential_env} "
+                f"X-meli-session-id_presente={bool(device_id)} "
                 f"payload={_sanitize_for_log(payment_data)}",
                 flush=True,
             )
