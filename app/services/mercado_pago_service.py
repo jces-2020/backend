@@ -45,6 +45,26 @@ def _classify_mp_error(status_http, error_code, blocked_by, error_msg):
     return "PROVIDER_ERROR"
 
 
+_REJECTED_MESSAGES = {
+    "cc_rejected_insufficient_amount": "Fondos insuficientes en la tarjeta.",
+    "cc_rejected_bad_filled_security_code": "Código de seguridad (CVV) incorrecto.",
+    "cc_rejected_bad_filled_date": "Fecha de vencimiento incorrecta.",
+    "cc_rejected_bad_filled_other": "Revisa los datos de la tarjeta.",
+    "cc_rejected_bad_filled_card_number": "Número de tarjeta incorrecto.",
+    "cc_rejected_call_for_authorize": "Debes autorizar el pago con tu banco.",
+    "cc_rejected_card_disabled": "Tarjeta deshabilitada. Contacta a tu banco.",
+    "cc_rejected_card_error": "No se pudo procesar la tarjeta.",
+    "cc_rejected_duplicated_payment": "Ya existe un pago con estos mismos datos.",
+    "cc_rejected_high_risk": "El pago fue rechazado por el sistema de prevención de fraude.",
+    "cc_rejected_max_attempts": "Se alcanzó el límite de intentos con esta tarjeta.",
+    "cc_rejected_other_reason": "El banco emisor rechazó el pago.",
+}
+
+
+def _mensaje_por_status_detail(status_detail):
+    return _REJECTED_MESSAGES.get(status_detail, "El banco emisor rechazó el pago.")
+
+
 def _sanitize_for_log(value, _depth=0):
     """Redacta campos sensibles antes de loggear una respuesta de Mercado Pago."""
     if _depth > 6:
@@ -78,6 +98,9 @@ class MercadoPagoService:
         print(f"[MP_SERVICE] SDK inicializado | ambiente={self.credential_env}", flush=True)
         self.sdk = mercadopago.SDK(access_token)
 
+        backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://api.vidriobras.com").rstrip("/")
+        self.notification_url = f"{backend_url}/api/pagos/webhook"
+
     # --------------------------------------------------
     # VALIDAR EMAIL (COMENTADO - ACEPTA CUALQUIER EMAIL)
     # --------------------------------------------------
@@ -86,6 +109,54 @@ class MercadoPagoService:
         # Mercado Pago automaticamente lo convierte a test user en modo TEST
         if not email:
             raise ValueError("Email de comprador es obligatorio")
+
+    def _result_from_payment_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """Clasifica la respuesta de un pago creado (HTTP 201) segun el campo `status`.
+
+        MP responde 201 tanto para pagos aprobados como pendientes o rechazados;
+        el estado real esta en `status`/`status_detail`, no en el codigo HTTP.
+        """
+        estado = response.get("status")
+        base = {
+            "payment_id": response.get("id"),
+            "status": estado,
+            "status_detail": response.get("status_detail"),
+            "amount": response.get("transaction_amount"),
+        }
+
+        if estado == "approved":
+            return {"success": True, **base}
+
+        if estado in ("pending", "in_process", "authorized"):
+            return {
+                "success": False,
+                "pending": True,
+                "message": "Tu pago está siendo revisado por Mercado Pago. Te notificaremos cuando se confirme.",
+                **base,
+            }
+
+        return {
+            "success": False,
+            "message": _mensaje_por_status_detail(response.get("status_detail")),
+            "error_category": "PAYMENT_REJECTED",
+            **base,
+        }
+
+    # --------------------------------------------------
+    # CONSULTAR ESTADO DE UN PAGO (usado por el webhook)
+    # --------------------------------------------------
+    def obtener_pago(self, payment_id: str) -> Dict[str, Any]:
+        try:
+            result = self.sdk.payment().get(payment_id)
+            if result.get("status") == 200:
+                return {"success": True, **result["response"]}
+            return {
+                "success": False,
+                "status": result.get("status"),
+                "error": result.get("response"),
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # --------------------------------------------------
     # CREAR PREFERENCIA (CHECKOUT)
@@ -109,7 +180,8 @@ class MercadoPagoService:
                 },
                 "binary_mode": True,
                 "statement_descriptor": "VIDRIOBRAS",
-                "external_reference": carrito_id
+                "external_reference": carrito_id,
+                "notification_url": self.notification_url
             }
 
             print("[MP_SERVICE] Creando preferencia...")
@@ -147,6 +219,7 @@ class MercadoPagoService:
         amount: float,
         payer_email: str,
         payer_identification: Dict[str, str],
+        installments: int = 1,
         yape_phone: Optional[str] = None,
         yape_otp: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -187,9 +260,11 @@ class MercadoPagoService:
                 "transaction_amount": float(amount),
                 "description": f"Pedido VIDRIOBRAS - Carrito {carrito_id}",
                 "payment_method_id": "yape",
+                "installments": int(installments) or 1,
                 "binary_mode": True,
                 "payer": payer_data,
                 "external_reference": carrito_id,
+                "notification_url": self.notification_url,
                 "metadata": {
                     "carrito_id": carrito_id,
                     "cliente_id": cliente_id
@@ -225,14 +300,9 @@ class MercadoPagoService:
 
             if result.get("status") == 201:
                 response = result["response"]
-                print(f"[MP_SERVICE] [OK] Pago YAPE exitoso: ID={response.get('id')}, Status={response.get('status')}")
-                return {
-                    "success": True,
-                    "payment_id": response.get("id"),
-                    "status": response.get("status"),
-                    "status_detail": response.get("status_detail"),
-                    "amount": response.get("transaction_amount")
-                }
+                resultado = self._result_from_payment_response(response)
+                print(f"[MP_SERVICE] [YAPE] Pago clasificado: status={resultado.get('status')} success={resultado.get('success')}", flush=True)
+                return resultado
 
             # Pago rechazado o pendiente por Mercado Pago
             response_data = result.get("response", {})
@@ -253,13 +323,7 @@ class MercadoPagoService:
                 print(f"[MP_SERVICE] [YAPE] Reintento status={retry_result.get('status')}")
                 if retry_result.get("status") == 201:
                     retry_response = retry_result["response"]
-                    return {
-                        "success": True,
-                        "payment_id": retry_response.get("id"),
-                        "status": retry_response.get("status"),
-                        "status_detail": retry_response.get("status_detail"),
-                        "amount": retry_response.get("transaction_amount")
-                    }
+                    return self._result_from_payment_response(retry_response)
                 response_data = retry_result.get("response", {})
                 error_msg = response_data.get("message", error_msg)
                 error_causes = response_data.get("cause", error_causes)
@@ -354,6 +418,7 @@ class MercadoPagoService:
                 "binary_mode": True,
                 "payer": payer_data,
                 "external_reference": carrito_id,
+                "notification_url": self.notification_url,
                 "metadata": {
                     "carrito_id": carrito_id,
                     "cliente_id": cliente_id
@@ -382,18 +447,14 @@ class MercadoPagoService:
 
             if result.get("status") == 201:
                 response = result["response"]
+                resultado = self._result_from_payment_response(response)
                 print(
-                    f"[MP_SERVICE][{idem_key}] [OK] Pago aprobado | "
+                    f"[MP_SERVICE][{idem_key}] [CARD] Pago clasificado | "
+                    f"status={resultado.get('status')} success={resultado.get('success')} "
                     f"response={_sanitize_for_log(response)}",
                     flush=True,
                 )
-                return {
-                    "success": True,
-                    "payment_id": response.get("id"),
-                    "status": response.get("status"),
-                    "status_detail": response.get("status_detail"),
-                    "amount": response.get("transaction_amount")
-                }
+                return resultado
 
             # Pago rechazado por Mercado Pago
             response_data = result.get("response", {})
@@ -451,14 +512,9 @@ class MercadoPagoService:
                 print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback status={retry_result.get('status')}", flush=True)
                 if retry_result.get("status") == 201:
                     retry_response = retry_result["response"]
-                    print(f"[MP_SERVICE][{idem_key}] [OK] Pago aprobado tras reintento fallback: ID={retry_response.get('id')}", flush=True)
-                    return {
-                        "success": True,
-                        "payment_id": retry_response.get("id"),
-                        "status": retry_response.get("status"),
-                        "status_detail": retry_response.get("status_detail"),
-                        "amount": retry_response.get("transaction_amount")
-                    }
+                    resultado = self._result_from_payment_response(retry_response)
+                    print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback clasificado: status={resultado.get('status')} success={resultado.get('success')}", flush=True)
+                    return resultado
 
                 fallback_response = retry_result.get("response", {})
                 print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback result: {_sanitize_for_log(fallback_response)}", flush=True)

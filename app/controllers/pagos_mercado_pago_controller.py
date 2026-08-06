@@ -348,6 +348,44 @@ def _obtener_o_crear_caja_activa() -> str | None:
 
 
 # --------------------------------------------------
+# WEBHOOK DE NOTIFICACIONES (Mercado Pago -> backend)
+# --------------------------------------------------
+@pagos_mp_bp.route("/api/pagos/webhook", methods=["POST", "GET"])
+def webhook_mercado_pago():
+    """
+    Mercado Pago llama a este endpoint cuando el estado de un pago cambia.
+    Nunca se confia en el body de la notificacion: solo se usa para saber
+    que payment_id consultar, y el estado real se obtiene con la API de MP.
+    """
+    body = request.get_json(silent=True) or {}
+    topic = request.args.get("type") or request.args.get("topic") or body.get("type")
+    data_id = (
+        request.args.get("data.id")
+        or request.args.get("id")
+        or (body.get("data") or {}).get("id")
+        or body.get("resource")
+    )
+
+    print(f"[MP_WEBHOOK] topic={topic} data_id={data_id} args={dict(request.args)} body={body}", flush=True)
+
+    if topic != "payment" or not data_id:
+        return jsonify({"success": True, "ignored": True}), 200
+
+    pago = mercado_pago_service.obtener_pago(data_id)
+    if not pago.get("success"):
+        print(f"[MP_WEBHOOK] No se pudo obtener payment_id={data_id}: {pago}", flush=True)
+        return jsonify({"success": False}), 200
+
+    print(
+        f"[MP_WEBHOOK] payment_id={data_id} status={pago.get('status')} "
+        f"status_detail={pago.get('status_detail')} external_reference={pago.get('external_reference')}",
+        flush=True,
+    )
+
+    return jsonify({"success": True}), 200
+
+
+# --------------------------------------------------
 # CREAR PREFERENCIA DE PAGO
 # --------------------------------------------------
 @pagos_mp_bp.route("/api/pagos/crear_preferencia", methods=["POST"])
@@ -587,10 +625,10 @@ def procesar_pago():
                 "message": "Datos incompletos"
             }), 400
 
-        if payment_method_id != "yape" and not token_mp:
+        if not token_mp:
             return jsonify({
                 "success": False,
-                "message": "Token requerido para pagos con tarjeta",
+                "message": "Token requerido para procesar el pago",
                 "error": "token_missing"
             }), 400
 
@@ -612,6 +650,7 @@ def procesar_pago():
                 carrito_id=carrito_id,
                 cliente_id=cliente_id,
                 amount=float(amount),
+                installments=int(installments),
                 payer_email=payer_email,
                 payer_identification=payer_identification,
                 yape_phone=data.get("yape_phone"),
@@ -655,6 +694,8 @@ def procesar_pago():
         )
         return jsonify({
             "success": False,
+            "pending": resultado.get("pending", False),
+            "payment_id": resultado.get("payment_id"),
             "message": resultado.get("message") or "Pago rechazado",
             "error": resultado.get("error") or resultado.get("message"),
             "cause": resultado.get("cause"),
@@ -1156,7 +1197,10 @@ def confirmar_compra():
             "stock_descuento": descuentos_stock,
             "stock_deltas": stock_deltas,
         }), 200
-        
+
+
+
+
     except Exception as e:
         print(f"[ERROR CONFIRMAR_COMPRA] {str(e)}")
         return jsonify({

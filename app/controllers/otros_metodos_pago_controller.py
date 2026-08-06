@@ -4,11 +4,10 @@ Controlador para procesar pagos con otros métodos (PagoEfectivo, etc.)
 """
 
 from flask import Blueprint, request, jsonify
-import mercadopago
-import os
 import uuid
 from mercadopago import config
 from dotenv import load_dotenv
+from app.services.mercado_pago_service import mercado_pago_service
 
 load_dotenv()
 
@@ -60,16 +59,6 @@ def procesar_otros_metodos():
         if cliente_id != cliente_id_token:
             return jsonify({"success": False, "message": "No autorizado"}), 403
 
-        # Inicializar SDK de Mercado Pago
-        access_token = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
-        if not access_token:
-            return jsonify({
-                "success": False,
-                "message": "Configuración de Mercado Pago no disponible"
-            }), 500
-
-        sdk = mercadopago.SDK(access_token)
-
         # Preparar datos del pago
         payment_data = {
             "transaction_amount": float(transaction_amount),
@@ -84,7 +73,8 @@ def procesar_otros_metodos():
                     "number": payer.get("identification", {}).get("number", "00000000")
                 }
             },
-            "external_reference": carrito_id
+            "external_reference": carrito_id,
+            "notification_url": mercado_pago_service.notification_url
         }
 
         # Configurar idempotencia
@@ -99,26 +89,37 @@ def procesar_otros_metodos():
         print(f"[OTROS_METODOS] Payment Data: {payment_data}")
 
         # Crear pago con Mercado Pago
-        result = sdk.payment().create(payment_data, request_options)
+        result = mercado_pago_service.sdk.payment().create(payment_data, request_options)
         print(f"[OTROS_METODOS] Respuesta: {result}")
 
         if result.get("status") == 201:
             response = result["response"]
+            estado = response.get("status")
             external_url = response.get("transaction_details", {}).get("external_resource_url")
-            
-            print(f"[OTROS_METODOS] ✅ Pago creado: {response.get('id')}")
+
+            print(f"[OTROS_METODOS] Pago creado: id={response.get('id')} status={estado}")
             if external_url:
                 print(f"[OTROS_METODOS] URL externa: {external_url}")
+
+            # El HTTP 201 solo indica que el pago se creo; "rejected" tambien
+            # devuelve 201 y no debe tratarse como pago exitoso.
+            if estado == "rejected":
+                return jsonify({
+                    "success": False,
+                    "message": "El pago fue rechazado",
+                    "status": estado,
+                    "status_detail": response.get("status_detail"),
+                }), 400
 
             respuesta = {
                 "success": True,
                 "payment_id": response.get("id"),
-                "status": response.get("status"),
+                "status": estado,
                 "status_detail": response.get("status_detail"),
                 "external_resource_url": external_url,
                 "transaction_details": response.get("transaction_details")
             }
-            
+
             print(f"[OTROS_METODOS] Enviando respuesta: {respuesta}")
 
             return jsonify(respuesta), 200
