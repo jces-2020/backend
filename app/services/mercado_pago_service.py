@@ -549,3 +549,4 @@ class MercadoPagoService:
 
 # Instancia global
 mercado_pago_service = MercadoPagoService()
+
