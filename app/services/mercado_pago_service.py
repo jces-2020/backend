@@ -178,7 +178,6 @@ class MercadoPagoService:
                 "payer": {
                     "email": email_cliente
                 },
-                "binary_mode": True,
                 "statement_descriptor": "VIDRIOBRAS",
                 "external_reference": carrito_id,
                 "notification_url": self.notification_url
@@ -261,7 +260,6 @@ class MercadoPagoService:
                 "description": f"Pedido VIDRIOBRAS - Carrito {carrito_id}",
                 "payment_method_id": "yape",
                 "installments": int(installments) or 1,
-                "binary_mode": True,
                 "payer": payer_data,
                 "external_reference": carrito_id,
                 "notification_url": self.notification_url,
@@ -415,7 +413,6 @@ class MercadoPagoService:
                 "description": f"Pedido VIDRIOBRAS - Carrito {carrito_id}",
                 "installments": int(installments),
                 "payment_method_id": payment_method_id,
-                "binary_mode": True,
                 "payer": payer_data,
                 "external_reference": carrito_id,
                 "notification_url": self.notification_url,
