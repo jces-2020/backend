@@ -654,6 +654,20 @@ def procesar_pago():
         payer_email = data.get("payer_email")
         payer_identification = data.get("payer_identification") or {}
         device_id = data.get("device_id")
+        payer_first_name = data.get("payer_first_name")
+        payer_last_name = data.get("payer_last_name")
+        items_payload = data.get("items") or []
+        additional_info_items = [
+            {
+                "id": str(it.get("id") or it.get("producto_id") or ""),
+                "title": str(it.get("title") or it.get("nombre") or "Producto VIDRIOBRAS"),
+                "description": str(it.get("description") or it.get("descripcion") or it.get("title") or it.get("nombre") or "Producto VIDRIOBRAS"),
+                "quantity": _to_positive_int(it.get("quantity") or it.get("cantidad"), 1),
+                "unit_price": _to_float(it.get("unit_price") or it.get("precio_unitario"), 0.0),
+            }
+            for it in items_payload
+            if isinstance(it, dict)
+        ]
 
         print(
             f"[PAGOS_MP] REQUEST /api/pagos/procesar_pago | carrito_id={carrito_id} "
@@ -699,7 +713,10 @@ def procesar_pago():
                 payer_email=payer_email,
                 payer_identification=payer_identification,
                 yape_phone=data.get("yape_phone"),
-                yape_otp=data.get("yape_otp")
+                yape_otp=data.get("yape_otp"),
+                payer_first_name=payer_first_name,
+                payer_last_name=payer_last_name,
+                items=additional_info_items,
             )
         else:
             resultado = mercado_pago_service.procesar_pago_con_token(
@@ -712,7 +729,10 @@ def procesar_pago():
                 device_id=device_id,
                 installments=int(installments),
                 payer_email=payer_email,
-                payer_identification=payer_identification
+                payer_identification=payer_identification,
+                payer_first_name=payer_first_name,
+                payer_last_name=payer_last_name,
+                items=additional_info_items,
             )
 
 

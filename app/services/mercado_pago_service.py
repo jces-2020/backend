@@ -249,7 +249,10 @@ class MercadoPagoService:
         payer_identification: Dict[str, str],
         installments: int = 1,
         yape_phone: Optional[str] = None,
-        yape_otp: Optional[str] = None
+        yape_otp: Optional[str] = None,
+        payer_first_name: Optional[str] = None,
+        payer_last_name: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Procesa pagos con YAPE (billetera digital).
@@ -284,9 +287,15 @@ class MercadoPagoService:
                     "number": yape_phone
                 }
 
+            if payer_first_name:
+                payer_data["first_name"] = payer_first_name
+            if payer_last_name:
+                payer_data["last_name"] = payer_last_name
+
             payment_data = {
                 "transaction_amount": float(amount),
                 "description": f"Pedido VIDRIOBRAS - Carrito {carrito_id}",
+                "statement_descriptor": "VIDRIOBRAS",
                 "payment_method_id": "yape",
                 "installments": int(installments) or 1,
                 "payer": payer_data,
@@ -297,6 +306,9 @@ class MercadoPagoService:
                     "cliente_id": cliente_id
                 }
             }
+
+            if items:
+                payment_data["additional_info"] = {"items": items}
 
             if token:
                 payment_data["token"] = token
@@ -411,6 +423,9 @@ class MercadoPagoService:
         payer_email: str,
         payer_identification: Dict[str, str],
         device_id: Optional[str] = None,
+        payer_first_name: Optional[str] = None,
+        payer_last_name: Optional[str] = None,
+        items: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
 
         idem_key = str(uuid.uuid4())
@@ -438,10 +453,16 @@ class MercadoPagoService:
                     "number": payer_identification_number
                 }
 
+            if payer_first_name:
+                payer_data["first_name"] = payer_first_name
+            if payer_last_name:
+                payer_data["last_name"] = payer_last_name
+
             payment_data = {
                 "transaction_amount": float(amount),
                 "token": token,
                 "description": f"Pedido VIDRIOBRAS - Carrito {carrito_id}",
+                "statement_descriptor": "VIDRIOBRAS",
                 "installments": int(installments),
                 "payment_method_id": payment_method_id,
                 "payer": payer_data,
@@ -456,6 +477,9 @@ class MercadoPagoService:
             # [CLEAN] issuer_id solo si existe
             if issuer_id:
                 payment_data["issuer_id"] = issuer_id
+
+            if items:
+                payment_data["additional_info"] = {"items": items}
 
             request_options = config.RequestOptions()
             custom_headers = {"x-idempotency-key": idem_key}
