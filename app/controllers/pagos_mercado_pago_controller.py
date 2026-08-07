@@ -8,6 +8,9 @@ Controlador de pagos con Mercado Pago
 
 from flask import Blueprint, request, jsonify
 from datetime import date
+import os
+import hmac
+import hashlib
 from app.services.mercado_pago_service import mercado_pago_service
 from app.services.cortes_service import calcular_total_corte, es_material_aluminio
 from app.services.supabase_client import supabase
@@ -347,6 +350,44 @@ def _obtener_o_crear_caja_activa() -> str | None:
 
 
 
+def _verificar_firma_webhook(data_id: str) -> bool:
+    """Valida x-signature segun el algoritmo oficial de Mercado Pago.
+
+    manifest = "id:{data_id};request-id:{x_request_id};ts:{ts};" (se omite
+    cualquier campo ausente), HMAC-SHA256 hex con el secreto del webhook,
+    comparado contra el v1 del header x-signature.
+    """
+    secret = os.getenv("MERCADO_PAGO_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        return True  # sin secreto configurado no se puede validar; no bloquear
+
+    x_signature = request.headers.get("x-signature", "")
+    x_request_id = request.headers.get("x-request-id", "")
+    if not x_signature:
+        return False
+
+    partes = dict(p.split("=", 1) for p in x_signature.split(",") if "=" in p)
+    ts = partes.get("ts", "")
+    v1 = partes.get("v1", "")
+    if not v1:
+        return False
+
+    data_id_norm = data_id or ""
+    if data_id_norm.isalnum():
+        data_id_norm = data_id_norm.lower()
+
+    manifest = ""
+    if data_id_norm:
+        manifest += f"id:{data_id_norm};"
+    if x_request_id:
+        manifest += f"request-id:{x_request_id};"
+    if ts:
+        manifest += f"ts:{ts};"
+
+    computado = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computado, v1)
+
+
 # --------------------------------------------------
 # WEBHOOK DE NOTIFICACIONES (Mercado Pago -> backend)
 # --------------------------------------------------
@@ -367,6 +408,10 @@ def webhook_mercado_pago():
     )
 
     print(f"[MP_WEBHOOK] topic={topic} data_id={data_id} args={dict(request.args)} body={body}", flush=True)
+
+    if not _verificar_firma_webhook(str(data_id or "")):
+        print("[MP_WEBHOOK] Firma x-signature invalida, notificacion descartada", flush=True)
+        return jsonify({"success": False, "message": "Firma invalida"}), 401
 
     if topic != "payment" or not data_id:
         return jsonify({"success": True, "ignored": True}), 200
