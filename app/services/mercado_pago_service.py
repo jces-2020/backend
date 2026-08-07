@@ -7,6 +7,7 @@ import mercadopago
 import os
 import uuid
 import re
+import requests
 from typing import Optional, Dict, List, Any
 from dotenv import load_dotenv
 from mercadopago import config
@@ -96,6 +97,7 @@ class MercadoPagoService:
 
         self.credential_env = "production" if access_token.startswith("APP_USR-") else "sandbox"
         print(f"[MP_SERVICE] SDK inicializado | ambiente={self.credential_env}", flush=True)
+        self.access_token = access_token
         self.sdk = mercadopago.SDK(access_token)
 
         backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://api.vidriobras.com").rstrip("/")
@@ -141,6 +143,33 @@ class MercadoPagoService:
             "error_category": "PAYMENT_REJECTED",
             **base,
         }
+
+    def _create_payment(self, payment_data: Dict[str, Any], request_options) -> Dict[str, Any]:
+        """Crea un pago llamando directo a la API REST (no via SDK).
+
+        El SDK python descarta los headers de la respuesta y con ellos el
+        `X-Request-Id` que Mercado Pago pide para investigar rechazos como
+        PA_UNAUTHORIZED_RESULT_FROM_POLICIES. Replica los mismos headers que
+        arma el SDK (misma x-idempotency-key) para que sea el mismo intento
+        de pago, no uno adicional.
+        """
+        request_options.access_token = self.access_token
+        headers = request_options.get_headers()
+        headers["Content-Type"] = "application/json"
+        try:
+            resp = requests.post(
+                "https://api.mercadopago.com/v1/payments",
+                json=payment_data,
+                headers=headers,
+                timeout=request_options.connection_timeout or 60,
+            )
+            return {
+                "status": resp.status_code,
+                "response": resp.json(),
+                "request_id": resp.headers.get("X-Request-Id") or resp.headers.get("x-request-id"),
+            }
+        except Exception as e:
+            return {"status": 500, "response": {"message": str(e)}, "request_id": None}
 
     # --------------------------------------------------
     # CONSULTAR ESTADO DE UN PAGO (usado por el webhook)
@@ -292,9 +321,9 @@ class MercadoPagoService:
 
             print(f"[MP_SERVICE] >> Enviando a API Mercado Pago (YAPE)...")
             print(f"[MP_SERVICE] >> Payment Data: {dict(list(payment_data.items())[:5])}...")
-            result = self.sdk.payment().create(payment_data, request_options)
+            result = self._create_payment(payment_data, request_options)
             print(f"[MP_SERVICE] >> Respuesta MP completa: {result}", flush=True)
-            print(f"[MP_SERVICE] >> Respuesta MP: status={result.get('status')}")
+            print(f"[MP_SERVICE] >> Respuesta MP: status={result.get('status')} X-Request-Id={result.get('request_id')}")
 
             if result.get("status") == 201:
                 response = result["response"]
@@ -313,11 +342,12 @@ class MercadoPagoService:
             print(f"[MP_SERVICE]    Error: {error_msg}")
             print(f"[MP_SERVICE]    Causas COMPLETAS: {error_causes}", flush=True)
             print(f"[MP_SERVICE]    Response completa: {response_data}", flush=True)
+            print(f"[MP_SERVICE]    X-Request-Id: {result.get('request_id')}", flush=True)
 
             if status_http == 400 and token and "token" in (error_msg or "").lower():
                 print("[MP_SERVICE] [YAPE] Error con token invalido, reintentando sin token...")
                 payment_data.pop("token", None)
-                retry_result = self.sdk.payment().create(payment_data, request_options)
+                retry_result = self._create_payment(payment_data, request_options)
                 print(f"[MP_SERVICE] [YAPE] Reintento status={retry_result.get('status')}")
                 if retry_result.get("status") == 201:
                     retry_response = retry_result["response"]
@@ -333,6 +363,7 @@ class MercadoPagoService:
                     "message": "Pago Yape no autorizado por Mercado Pago (UNAUTHORIZED). Verifica credenciales y modo correcto.",
                     "status": 403,
                     "error": error_msg,
+                    "request_id": result.get("request_id"),
                     "cause": error_causes
                 }
 
@@ -439,8 +470,12 @@ class MercadoPagoService:
                 f"payload={_sanitize_for_log(payment_data)}",
                 flush=True,
             )
-            result = self.sdk.payment().create(payment_data, request_options)
-            print(f"[MP_SERVICE][{idem_key}] << HTTP status del proveedor={result.get('status')}", flush=True)
+            result = self._create_payment(payment_data, request_options)
+            print(
+                f"[MP_SERVICE][{idem_key}] << HTTP status del proveedor={result.get('status')} "
+                f"X-Request-Id={result.get('request_id')}",
+                flush=True,
+            )
 
             if result.get("status") == 201:
                 response = result["response"]
@@ -463,7 +498,7 @@ class MercadoPagoService:
             print(
                 f"[MP_SERVICE][{idem_key}] [ERROR] Pago rechazado | "
                 f"status_http={result.get('status')} code={error_code} blocked_by={blocked_by} "
-                f"mensaje={error_msg} causas={error_causes} "
+                f"mensaje={error_msg} causas={error_causes} X-Request-Id={result.get('request_id')} "
                 f"response_completo={_sanitize_for_log(response_data)}",
                 flush=True,
             )
@@ -471,6 +506,11 @@ class MercadoPagoService:
             error_category = _classify_mp_error(result.get("status"), error_code, blocked_by, error_msg)
 
             if error_category == "CONFIGURATION_ERROR":
+                print(
+                    f"[MP_SERVICE][{idem_key}] >>> Para soporte de Mercado Pago, X-Request-Id={result.get('request_id')} "
+                    f"idempotency-key={idem_key}",
+                    flush=True,
+                )
                 return {
                     "success": False,
                     "message": (
@@ -482,6 +522,7 @@ class MercadoPagoService:
                     "error_code": error_code,
                     "blocked_by": blocked_by,
                     "error_category": error_category,
+                    "request_id": result.get("request_id"),
                     "cause": error_causes
                 }
 
@@ -505,7 +546,7 @@ class MercadoPagoService:
                 fallback_data.pop("issuer_id", None)
                 fallback_data.pop("binary_mode", None)
 
-                retry_result = self.sdk.payment().create(fallback_data, request_options)
+                retry_result = self._create_payment(fallback_data, request_options)
                 print(f"[MP_SERVICE][{idem_key}] [CARD] Reintento fallback status={retry_result.get('status')}", flush=True)
                 if retry_result.get("status") == 201:
                     retry_response = retry_result["response"]

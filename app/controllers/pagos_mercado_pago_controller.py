@@ -689,12 +689,14 @@ def procesar_pago():
         print(
             f"[PAGOS_MP] RESPONSE /api/pagos/procesar_pago -> 400 | "
             f"status_proveedor={resultado.get('status')} error_category={resultado.get('error_category')} "
-            f"error={resultado.get('error') or resultado.get('message')} cause={resultado.get('cause')}",
+            f"error={resultado.get('error') or resultado.get('message')} cause={resultado.get('cause')} "
+            f"request_id={resultado.get('request_id')}",
             flush=True,
         )
         return jsonify({
             "success": False,
             "pending": resultado.get("pending", False),
+            "request_id": resultado.get("request_id"),
             "payment_id": resultado.get("payment_id"),
             "message": resultado.get("message") or "Pago rechazado",
             "error": resultado.get("error") or resultado.get("message"),
@@ -1207,3 +1209,4 @@ def confirmar_compra():
             "success": False,
             "message": f"Error procesando compra: {str(e)}"
         }), 500
+
