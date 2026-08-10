@@ -168,6 +168,33 @@ def emitir_comprobante():
 
 
         # ========================================
+        # GUARDAR UBICACION (si se envio)
+        # ========================================
+
+        ubicacion = datos.get("ubicacion")
+
+        if ubicacion and ubicacion.get("latitud") is not None and ubicacion.get("longitud") is not None:
+
+            try:
+
+                ubicacion_insert = supabase.table("ubicacion").insert({
+                    "cliente_id": ubicacion.get("cliente_id") or None,
+                    "direccion": ubicacion.get("direccion"),
+                    "referencia": ubicacion.get("referencia"),
+                    "latitud": ubicacion.get("latitud"),
+                    "longitud": ubicacion.get("longitud"),
+                }).execute()
+
+                if ubicacion_insert.data:
+                    resultado["ubicacion_id"] = \
+                        ubicacion_insert.data[0].get("id_ubicacion")
+
+            except Exception as e:
+
+                print("Error guardando ubicacion:", str(e))
+
+
+        # ========================================
         # RESPUESTA FINAL
         # ========================================
 
