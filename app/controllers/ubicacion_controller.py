@@ -53,3 +53,4 @@ def reverse_geocode():
         return jsonify({"success": False, "message": str(e)}), 502
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
