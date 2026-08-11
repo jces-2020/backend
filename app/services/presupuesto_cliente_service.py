@@ -14,6 +14,7 @@ from services.supabase_client import supabase
 
 DEFAULT_CARRITO_ID = "bf95672d-cf61-460c-b826-1ee86e513141"
 DEFAULT_TIPO_VENTA_ID_SERVICIO = "8bd1ccec-bca7-46f9-bbcf-810cf8d1a929"
+DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"  # PENDIENTE
 
 
 def _build_jwt_temporal(cliente: Dict) -> str:
@@ -185,6 +186,7 @@ def guardar_multiples_presupuestos(
             'nombre':      nombre_cliente,
             'descripcion': json.dumps(meta),
             'tipo':        'servicio',
+            'estado_notificacion_id': DEFAULT_ESTADO_NOTIFICACION_ID,
             'venta_id':    ventas_creadas[0].get('id_venta') if ventas_creadas else None,
         }
         supabase.table('notificacion').insert(notif_insert).execute()
