@@ -941,34 +941,59 @@ def eliminar_pedido_admin(carrito_id):
         # 1) Ítems: ya no se elimina venta; el historial debe permanecer.
         deleted_items = 0
 
-        # 2) Carrito
+        # 2) Carrito — 'venta.carrito_id' tiene FK hacia carrito_compras, así
+        # que si queda alguna venta enlazada, borrar el carrito falla en
+        # silencio (violación de integridad referencial). Primero se
+        # desvincula la venta (se le quita el carrito_id, la fila NO se toca)
+        # y recién ahí se borra carrito_compras.
+        try:
+            supabase.table('venta').update({'carrito_id': None}).eq('carrito_id', carrito_id).execute()
+        except Exception as _ve:
+            print(f"[ELIMINAR_PEDIDO] WARN no se pudo desvincular venta.carrito_id={carrito_id}: {_ve}")
+
         try:
             car_del = supabase.table('carrito_compras').delete().eq('id_carrito', carrito_id).execute()
-            if getattr(car_del, 'data', None):
-                deleted_carritos = len(car_del.data)
-        except Exception:
+            deleted_carritos = len(getattr(car_del, 'data', None) or [])
+            if not deleted_carritos:
+                print(f"[ELIMINAR_PEDIDO] WARN carrito_compras {carrito_id} no se elimino (0 filas afectadas)")
+        except Exception as _ce:
+            print(f"[ELIMINAR_PEDIDO] ERROR eliminando carrito_compras {carrito_id}: {_ce}")
             deleted_carritos = 0
 
-        # 3) Notificaciones asociadas
+        # 3) Notificaciones asociadas — se borra por id_notificacion (clave
+        # primaria, 100% confiable) cuando el frontend lo manda, y además se
+        # busca por texto en la descripcion para atrapar duplicados/legado con
+        # el mismo carrito_id que la búsqueda directa no cubriría.
         try:
+            ids = set()
+
+            notif_id_directo = (request.args.get('notif_id') or '').strip()
+            if notif_id_directo:
+                ids.add(notif_id_directo)
+
             try:
                 n_like = supabase.table('notificacion').select('id_notificacion, descripcion') \
                     .like('descripcion', f"%{carrito_id}%").execute()
-                ids = [row.get('id_notificacion') for row in getattr(n_like, 'data', []) or [] if row.get('id_notificacion')]
+                for row in getattr(n_like, 'data', []) or []:
+                    if row.get('id_notificacion'):
+                        ids.add(row.get('id_notificacion'))
             except Exception:
                 n_all = supabase.table('notificacion').select('id_notificacion, descripcion').execute()
-                ids = []
                 for row in getattr(n_all, 'data', []) or []:
                     meta = _parse_notif_desc(row.get('descripcion'))
-                    if str(meta.get('carrito_id')) == str(carrito_id):
-                        ids.append(row.get('id_notificacion'))
+                    if str(meta.get('carrito_id')) == str(carrito_id) and row.get('id_notificacion'):
+                        ids.add(row.get('id_notificacion'))
 
             for nid in ids:
                 try:
-                    supabase.table('notificacion').delete().eq('id_notificacion', nid).execute()
-                    deleted_notifs += 1
-                except Exception:
-                    pass
+                    del_res = supabase.table('notificacion').delete().eq('id_notificacion', nid).execute()
+                    filas_borradas = len(getattr(del_res, 'data', None) or [])
+                    if filas_borradas:
+                        deleted_notifs += filas_borradas
+                    else:
+                        print(f"[ELIMINAR_PEDIDO] WARN notificacion {nid} no se elimino (0 filas afectadas)")
+                except Exception as _de:
+                    print(f"[ELIMINAR_PEDIDO] ERROR eliminando notificacion {nid}: {_de}")
         except Exception:
             deleted_notifs = 0
 
