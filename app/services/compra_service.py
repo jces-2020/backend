@@ -97,25 +97,13 @@ def _slug_nombre_para_correo(nombre: str) -> str:
     return base[:24] or "cliente"
 
 
-def _descontar_stock_productos(productos_agrupados: Dict[str, float], cortes_payload: List[dict]) -> None:
-    """Descuenta stock real de la tabla productos para compras normales y cortes."""
-    descuentos = {}
-
-    for pid, cantidad in (productos_agrupados or {}).items():
-        try:
-            descuentos[pid] = int(descuentos.get(pid, 0)) + int(float(cantidad or 0))
-        except Exception:
-            continue
-
-
 def _guardar_lineas_venta(
     productos_agrupados: Dict[str, float],
-    cortes_payload: List[dict],
     carrito_id: str,
     cliente_id: str,
     metodo_pago: str,
 ) -> Dict[str, Any]:
-    """Guarda líneas de venta en la tabla venta y retorna total + id de ventas creadas."""
+    """Guarda líneas de venta (planchas) en la tabla venta y retorna total + id de ventas creadas."""
     total_venta = 0.0
     lineas = []
 
@@ -136,6 +124,32 @@ def _guardar_lineas_venta(
             "fecha_venta": time.strftime("%Y-%m-%d"),
             "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
         })
+
+    venta_ids = []
+    if lineas:
+        insert_res = supabase.table("venta").insert(lineas).execute()
+        venta_ids = [str(v.get("id_venta")) for v in (insert_res.data or []) if v.get("id_venta")]
+
+    return {
+        "total": round(total_venta, 2),
+        "venta_ids": venta_ids,
+    }
+
+
+def _guardar_cortes_como_venta(
+    cortes_payload: List[dict],
+    carrito_id: str,
+    cliente_id: str,
+    metodo_pago: str,
+) -> Dict[str, Any]:
+    """
+    Crea una venta por cada corte y recién con ese id_venta guarda el corte en
+    'cortes' (venta_id es la única FK que tiene esa tabla; ya no existen
+    carrito_id/producto_id en 'cortes').
+    """
+    total_venta = 0.0
+    venta_ids = []
+    cortes_db = []
 
     for corte in (cortes_payload or []):
         pid_corte = str(corte.get("producto_id") or "").strip()
@@ -158,7 +172,8 @@ def _guardar_lineas_venta(
             monto = precio * cantidad
         monto = round(monto, 2)
         total_venta += monto
-        lineas.append({
+
+        venta_res = supabase.table("venta").insert({
             "cliente_id": cliente_id,
             "producto_id": pid_corte,
             "carrito_id": carrito_id,
@@ -167,78 +182,29 @@ def _guardar_lineas_venta(
             "metodo": metodo_pago,
             "fecha_venta": time.strftime("%Y-%m-%d"),
             "tipo_venta_id": DEFAULT_TIPO_VENTA_ID_PRODUCTO,
+        }).execute()
+        venta_row = (venta_res.data or [None])[0]
+        if not venta_row or not venta_row.get("id_venta"):
+            continue
+        venta_ids.append(str(venta_row.get("id_venta")))
+
+        cortes_db.append({
+            "venta_id": venta_row.get("id_venta"),
+            "ancho_cm": ancho_cm,
+            "alto_cm": alto_cm,
+            "cantidad": int(cantidad) if cantidad else 1,
+            "estado": "pendiente",
+            "normbre": corte.get("normbre") or "",
         })
 
-    venta_ids = []
-    if lineas:
-        insert_res = supabase.table("venta").insert(lineas).execute()
-        venta_ids = [str(v.get("id_venta")) for v in (insert_res.data or []) if v.get("id_venta")]
+    if cortes_db:
+        supabase.table("cortes").insert(cortes_db).execute()
 
     return {
         "total": round(total_venta, 2),
         "venta_ids": venta_ids,
     }
 
-    for corte in (cortes_payload or []):
-        pid = str(corte.get("producto_id") or "").strip()
-        if not pid:
-            continue
-        try:
-            cantidad_corte = int(float(corte.get("cantidad") or 0))
-        except Exception:
-            cantidad_corte = 0
-        if cantidad_corte > 0:
-            descuentos[pid] = int(descuentos.get(pid, 0)) + cantidad_corte
-
-    if not descuentos:
-        return
-
-    producto_ids = list(descuentos.keys())
-    productos_res = supabase.table("productos").select("id_producto, cantidad").in_("id_producto", producto_ids).execute()
-    stock_map = {}
-    for p in (productos_res.data or []):
-        pid = str(p.get("id_producto") or "")
-        if not pid:
-            continue
-        try:
-            stock_map[pid] = int(float(p.get("cantidad") or 0))
-        except Exception:
-            stock_map[pid] = 0
-
-    for pid, descuento in descuentos.items():
-        disponible = int(stock_map.get(pid, 0))
-        if disponible < int(descuento):
-            raise ValueError(f"Stock insuficiente para producto {pid}: disponible {disponible}, solicitado {descuento}")
-
-    stock_nuevos: dict = {}
-    for pid, descuento in descuentos.items():
-        if descuento <= 0:
-            continue
-        try:
-            actual = int(stock_map.get(pid, 0))
-            nuevo = max(0, actual - int(descuento))
-            supabase.table("productos").update({"cantidad": nuevo}).eq("id_producto", pid).execute()
-            stock_nuevos[pid] = (nuevo, actual)
-        except Exception as e:
-            print(f"[COMPRA_SERVICE] [!] Error descontando stock de {pid}: {str(e)}")
-            raise
-
-    # -- Notificar a Flutter via Pusher (no bloquea si falla) --
-    try:
-        from app.services.pusher_service import notificar_stock_actualizado
-        pids = list(stock_nuevos.keys())
-        if pids:
-            prods_res = supabase.table("productos").select("id_producto, nombre, codigo, IMG_P") \
-                .in_("id_producto", pids).execute()
-            nombre_map = {
-                str(p["id_producto"]): (p.get("nombre", ""), p.get("codigo"), p.get("IMG_P"))
-                for p in (prods_res.data or [])
-            }
-            for pid, (nuevo, anterior) in stock_nuevos.items():
-                nombre, codigo, imagen_url = nombre_map.get(pid, ("", None, None))
-                notificar_stock_actualizado(pid, nombre, nuevo, anterior, codigo, imagen_url)
-    except Exception as _pe:
-        print(f"[COMPRA_SERVICE] Pusher omitido: {_pe}")
 
 # Guardar flujo de compra
 
@@ -279,7 +245,7 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 cantidad = 1
             productos_agrupados[pid] = float(productos_agrupados.get(pid, 0)) + cantidad
 
-        # 3. Guardar cortes en cortes
+        # 3. Preparar cortes (se guardan más abajo, enlazados a su venta_id)
         cortes_payload = []
         for c in cortes:
             pid_corte = _resolver_producto_uuid(c.get("producto_id"))
@@ -312,28 +278,30 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 "ancho_cm": ancho_cm,
                 "alto_cm": alto_cm,
                 "cantidad": cantidad_corte,
-                "carrito_id": id_carrito,
                 "producto_id": pid_corte,
                 "normbre": c.get("nombre", ""),
                 "_categoria": str(c.get("categoria") or "").upper(),
             })
-        if cortes_payload:
-            db_cortes = [{k: v for k, v in c.items() if not k.startswith('_')} for c in cortes_payload]
-            supabase.table("cortes").insert(db_cortes).execute()
 
-        _descontar_stock_productos(productos_agrupados, cortes_payload)
-        
-        # 4. Guardar líneas de venta con el detalle real primero
+        # 4. Guardar líneas de venta: planchas primero, cortes después (cada
+        # corte crea su propia venta y recién con ese id_venta se inserta en
+        # 'cortes', que solo se relaciona por venta_id).
         try:
             venta_result = _guardar_lineas_venta(
                 productos_agrupados=productos_agrupados,
+                carrito_id=id_carrito,
+                cliente_id=cliente["id_cliente"],
+                metodo_pago=metodo_normalizado,
+            )
+            cortes_result = _guardar_cortes_como_venta(
                 cortes_payload=cortes_payload,
                 carrito_id=id_carrito,
                 cliente_id=cliente["id_cliente"],
                 metodo_pago=metodo_normalizado,
             )
-            total_venta = venta_result.get("total", 0.0)
-            primera_venta_id = (venta_result.get("venta_ids") or [None])[0]
+            total_venta = venta_result.get("total", 0.0) + cortes_result.get("total", 0.0)
+            todas_las_ventas = (venta_result.get("venta_ids") or []) + (cortes_result.get("venta_ids") or [])
+            primera_venta_id = todas_las_ventas[0] if todas_las_ventas else None
             print(f"[COMPRA_SERVICE] Total venta: S/ {total_venta:.2f}, Metodo: {metodo_normalizado}")
         except Exception as e:
             print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
@@ -435,7 +403,7 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 cantidad = 1
             productos_agrupados[pid] = float(productos_agrupados.get(pid, 0)) + cantidad
 
-        # 3. Guardar cortes en cortes (nombre especial)
+        # 3. Preparar cortes (se guardan más abajo, enlazados a su venta_id)
         cortes_payload = []
         for c in cortes:
             pid_corte = _resolver_producto_uuid(c.get("producto_id"))
@@ -467,27 +435,30 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 "ancho_cm": ancho_cm,
                 "alto_cm": alto_cm,
                 "cantidad": cantidad_corte,
-                "carrito_id": id_carrito,
                 "producto_id": pid_corte,
                 "normbre": nombre_completo,
                 "_categoria": str(c.get("categoria") or "").upper(),
             })
-        if cortes_payload:
-            db_cortes = [{k: v for k, v in c.items() if not k.startswith('_')} for c in cortes_payload]
-            supabase.table("cortes").insert(db_cortes).execute()
 
-        _descontar_stock_productos(productos_agrupados, cortes_payload)
-        # 4. Calcular total y registrar venta primero
+        # 4. Guardar líneas de venta: planchas primero, cortes después (cada
+        # corte crea su propia venta y recién con ese id_venta se inserta en
+        # 'cortes', que solo se relaciona por venta_id).
         try:
             venta_result = _guardar_lineas_venta(
                 productos_agrupados=productos_agrupados,
+                carrito_id=id_carrito,
+                cliente_id=cliente_temp["id_cliente"],
+                metodo_pago=metodo_normalizado,
+            )
+            cortes_result = _guardar_cortes_como_venta(
                 cortes_payload=cortes_payload,
                 carrito_id=id_carrito,
                 cliente_id=cliente_temp["id_cliente"],
                 metodo_pago=metodo_normalizado,
             )
-            total_venta = venta_result.get("total", 0.0)
-            primera_venta_id = (venta_result.get("venta_ids") or [None])[0]
+            total_venta = venta_result.get("total", 0.0) + cortes_result.get("total", 0.0)
+            todas_las_ventas = (venta_result.get("venta_ids") or []) + (cortes_result.get("venta_ids") or [])
+            primera_venta_id = todas_las_ventas[0] if todas_las_ventas else None
             print(f"[COMPRA_SERVICE] Total venta: S/ {total_venta:.2f}, Metodo: {metodo_normalizado}")
         except Exception as e:
             print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")

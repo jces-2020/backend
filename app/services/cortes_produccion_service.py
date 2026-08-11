@@ -9,62 +9,78 @@ from typing import Optional, Dict, Any, List
 def obtener_cortes_por_carrito(carrito_id: str) -> Dict[str, Any]:
     """
     Obtiene todos los cortes asociados a un carrito específico.
-    
+
+    La tabla 'cortes' ya no tiene carrito_id/producto_id propios: se relaciona
+    con el carrito a través de venta_id (cortes.venta_id -> venta.id_venta,
+    venta.carrito_id / venta.producto_id).
+
     Args:
         carrito_id: UUID del carrito
-    
+
     Returns:
         dict con {success: bool, cortes: list, error?: str}
     """
     try:
-        # Obtener cortes con información del producto
-        cortes_result = supabase.table("cortes") \
-            .select("*, productos(nombre, codigo, descripcion, categoria_id, categoria(descripcion), almacen(fila, columna))") \
+        ventas_result = supabase.table("venta") \
+            .select("id_venta, producto_id") \
             .eq("carrito_id", carrito_id) \
             .execute()
-        
+        ventas = ventas_result.data or []
+        venta_producto_map = {v.get("id_venta"): v.get("producto_id") for v in ventas if v.get("id_venta")}
+        venta_ids = list(venta_producto_map.keys())
+
+        if not venta_ids:
+            return {"success": True, "cortes": [], "total": 0}
+
+        cortes_result = supabase.table("cortes") \
+            .select("id_corte, ancho_cm, alto_cm, cantidad, estado, fecha_registro, normbre, venta_id") \
+            .in_("venta_id", venta_ids) \
+            .execute()
         cortes = cortes_result.data or []
-        
-        # Si la consulta compleja falla, intentar simple
-        if not cortes:
-            cortes_result = supabase.table("cortes") \
-                .select("*") \
-                .eq("carrito_id", carrito_id) \
+
+        producto_ids = list({pid for pid in venta_producto_map.values() if pid})
+        productos_map: Dict[str, Any] = {}
+        if producto_ids:
+            productos_result = supabase.table("productos") \
+                .select("id_producto, nombre, codigo, descripcion, categoria_id, categoria(descripcion), almacen(fila, columna)") \
+                .in_("id_producto", producto_ids) \
                 .execute()
-            
-            cortes = cortes_result.data or []
-        
+            productos_map = {p.get("id_producto"): p for p in (productos_result.data or [])}
+
         # Formatear datos para facilitar uso en frontend
         cortes_formateados = []
         for corte in cortes:
-            producto = corte.get("productos") or {}
-            categoria = producto.get("categoria") or {} if isinstance(producto, dict) else {}
-            almacen = producto.get("almacen") or {} if isinstance(producto, dict) else {}
-            
+            producto_id = venta_producto_map.get(corte.get("venta_id"))
+            producto = productos_map.get(producto_id) or {}
+            categoria = producto.get("categoria") or {}
+            almacen = producto.get("almacen") or {}
+            ancho_cm = corte.get("ancho_cm") or 0
+            alto_cm = corte.get("alto_cm") or 0
+
             cortes_formateados.append({
                 "id_corte": corte.get("id_corte"),
-                "ancho_cm": corte.get("ancho_cm"),
-                "alto_cm": corte.get("alto_cm"),
+                "ancho_cm": ancho_cm,
+                "alto_cm": alto_cm,
                 "cantidad": corte.get("cantidad"),
                 "estado": corte.get("estado"),
                 "fecha_registro": corte.get("fecha_registro"),
-                "producto_id": corte.get("producto_id"),
-                "producto_nombre": producto.get("nombre") if isinstance(producto, dict) else None,
-                "producto_codigo": producto.get("codigo") if isinstance(producto, dict) else None,
-                "producto_descripcion": producto.get("descripcion") if isinstance(producto, dict) else None,
-                "categoria_id": producto.get("categoria_id") if isinstance(producto, dict) else None,
+                "producto_id": producto_id,
+                "producto_nombre": producto.get("nombre") or corte.get("normbre") or "Corte personalizado",
+                "producto_codigo": producto.get("codigo"),
+                "producto_descripcion": producto.get("descripcion"),
+                "categoria_id": producto.get("categoria_id"),
                 "categoria": categoria.get("descripcion") if isinstance(categoria, dict) else None,
                 "producto_almacen_fila": almacen.get("fila") if isinstance(almacen, dict) else None,
                 "producto_almacen_columna": almacen.get("columna") if isinstance(almacen, dict) else None,
-                "area_m2": round((corte.get("ancho_cm", 0) * corte.get("alto_cm", 0)) / 10000, 4)
+                "area_m2": round((ancho_cm * alto_cm) / 10000, 4)
             })
-        
+
         return {
             "success": True,
             "cortes": cortes_formateados,
             "total": len(cortes_formateados)
         }
-    
+
     except Exception as e:
         import traceback
         print(f"[ERROR] obtener_cortes_por_carrito({carrito_id}): {str(e)}")

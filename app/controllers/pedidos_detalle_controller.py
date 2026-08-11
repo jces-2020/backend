@@ -231,6 +231,7 @@ def listar_notificaciones_admin():
                 carrito_ids.append(carrito_key)
 
         carrito_estado_map = {}
+        carrito_query_ok = False
         if carrito_ids:
             try:
                 carritos = supabase.table('carrito_compras').select('id_carrito, estado').in_('id_carrito', carrito_ids).execute()
@@ -239,11 +240,42 @@ def listar_notificaciones_admin():
                     if not cid:
                         continue
                     carrito_estado_map[cid] = (row.get('estado') or '').strip() or None
+                carrito_query_ok = True
             except Exception:
                 carrito_estado_map = {}
+                carrito_query_ok = False
+
+        # parsed_rows respeta el orden de notifs_raw (fecha desc), así que la
+        # primera vez que aparece un carrito_key es siempre la más reciente.
+        seen_carrito_keys = set()
 
         for n, meta, carrito_id in parsed_rows:
-            c_estado = carrito_estado_map.get(str(carrito_id or '').strip())
+            carrito_key = str(carrito_id or '').strip()
+
+            # Notificación huérfana: apunta a un carrito que ya no existe (borrado
+            # a medias o en un intento anterior). Se limpia sola para que no
+            # reaparezca como una tarjeta "fantasma" tras recargar.
+            if carrito_query_ok and carrito_key and carrito_key not in carrito_estado_map:
+                try:
+                    supabase.table('notificacion').delete().eq('id_notificacion', n.get('id_notificacion')).execute()
+                except Exception:
+                    pass
+                continue
+
+            # Notificación duplicada: mismo carrito ya representado por otra
+            # notificación más reciente (quedaron dobles por un bug ya corregido
+            # que creaba una notificación al pagar y otra al generar el comprobante).
+            # Se conserva solo la más reciente y se borra el resto.
+            if carrito_key:
+                if carrito_key in seen_carrito_keys:
+                    try:
+                        supabase.table('notificacion').delete().eq('id_notificacion', n.get('id_notificacion')).execute()
+                    except Exception:
+                        pass
+                    continue
+                seen_carrito_keys.add(carrito_key)
+
+            c_estado = carrito_estado_map.get(carrito_key)
 
             desc_txt = meta.get('texto') or n.get('descripcion') or ''
             if meta.get('cantidad'):
@@ -284,6 +316,50 @@ def listar_notificaciones_admin():
             notifs.append(item)
 
         return jsonify({'success': True, 'notificaciones': notifs}), 200
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@pedidos_detalle_api.route('/api/admin/pedidos/cantidades', methods=['GET'])
+def obtener_cantidades_pedidos_admin():
+    """
+    Devuelve {carrito_id: total_items} para varios carritos en una sola consulta.
+    Liviano: evita llamar al detalle completo (cliente + productos + cortes) solo
+    para mostrar el chip de cantidad en cada tarjeta del Panel de Obras.
+    """
+    try:
+        ok, resp = _require_personal(request, allowed_areas=['ALMACEN', 'ADMINISTRACION', 'OBRAS', 'TRABAJO'])
+        if not ok:
+            return resp
+
+        raw_ids = (request.args.get('carrito_ids') or '').strip()
+        carrito_ids = [c.strip() for c in raw_ids.split(',') if c.strip()]
+        if not carrito_ids:
+            return jsonify({'success': True, 'cantidades': {}}), 200
+
+        ventas = supabase.table('venta').select('id_venta,carrito_id').in_('carrito_id', carrito_ids).execute()
+        ventas_data = getattr(ventas, 'data', []) or []
+
+        venta_ids = [v.get('id_venta') for v in ventas_data if v.get('id_venta')]
+        cortes_por_venta = {}
+        if venta_ids:
+            cortes = supabase.table('cortes').select('venta_id').in_('venta_id', venta_ids).execute()
+            for row in getattr(cortes, 'data', []) or []:
+                vid = str(row.get('venta_id') or '')
+                if vid:
+                    cortes_por_venta[vid] = cortes_por_venta.get(vid, 0) + 1
+
+        cantidades = {}
+        for v in ventas_data:
+            cid = str(v.get('carrito_id') or '')
+            if not cid:
+                continue
+            vid = str(v.get('id_venta') or '')
+            n_cortes = cortes_por_venta.get(vid, 0)
+            cantidades[cid] = cantidades.get(cid, 0) + (n_cortes if n_cortes > 0 else 1)
+
+        return jsonify({'success': True, 'cantidades': cantidades}), 200
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
