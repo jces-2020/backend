@@ -10,7 +10,6 @@ import time
 import re
 
 # Constante para tipo de venta de productos
-DEFAULT_CARRITO_ID = "bf95672d-cf61-460c-b826-1ee86e513141"
 DEFAULT_TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
 DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"
 
@@ -259,20 +258,14 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
     
     # Si existe cliente
     if cliente:
-        # 1. Resolver carrito_compras de progreso (id fijo para barra)
-        carrito_existente = supabase.table("carrito_compras").select("id_carrito").eq("id_carrito", DEFAULT_CARRITO_ID).limit(1).execute()
-        if carrito_existente.data:
-            id_carrito = carrito_existente.data[0]["id_carrito"]
-            supabase.table("carrito_compras").update({"estado": "inicio"}).eq("id_carrito", id_carrito).execute()
-        else:
-            carrito_payload = {
-                "id_carrito": DEFAULT_CARRITO_ID,
-                "estado": "inicio"
-            }
-            carrito_res = supabase.table("carrito_compras").insert(carrito_payload).execute()
-            if not carrito_res.data:
-                return False
-            id_carrito = carrito_res.data[0]["id_carrito"]
+        # 1. Crear un carrito_compras nuevo por cada compra (una barra de progreso por compra)
+        carrito_payload = {
+            "estado": "inicio"
+        }
+        carrito_res = supabase.table("carrito_compras").insert(carrito_payload).execute()
+        if not carrito_res.data:
+            return False
+        id_carrito = carrito_res.data[0]["id_carrito"]
         
         # 2. Consolidar productos para guardarlos luego en venta
         # Consolidar por producto_id para evitar conflicto de PK compuesta

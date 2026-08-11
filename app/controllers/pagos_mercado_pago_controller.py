@@ -928,44 +928,22 @@ def confirmar_compra():
 
 
 
-        # Regla de negocio: usar carrito fijo para la barra de progreso cliente.
-        carrito_id = DEFAULT_CARRITO_ID
-        print(f"[CONFIRMAR_COMPRA] Usando carrito fijo de progreso: {carrito_id}")
-
-
-
-
-        # 1. Verificar/Crear carrito si no existe
+        # Crear un carrito_compras nuevo por cada compra confirmada (una barra de progreso por compra).
         try:
-            carrito_check = supabase.table("carrito_compras") \
-                .select("id_carrito") \
-                .eq("id_carrito", carrito_id) \
-                .limit(1) \
-                .execute()
-           
-            if not carrito_check.data:
-                # Crear nuevo carrito si no existe
-                print(f"[CONFIRMAR_COMPRA] Creando carrito: {carrito_id} para cliente: {cliente_id}")
-                carrito_data = {
-                    "id_carrito": carrito_id,
-                    "estado": "inicio",
-                    "nombre": "progreso_cliente"
-                }
-                carrito_insert = supabase.table("carrito_compras").insert(carrito_data).execute()
-                print(f"[CONFIRMAR_COMPRA] OK Carrito creado exitosamente")
-            else:
-                print(f"[CONFIRMAR_COMPRA] Carrito ya existe: {carrito_id}")
-                # Asegurar estado visible para barra de seguimiento en compras nuevas
-                supabase.table("carrito_compras") \
-                    .update({"estado": "inicio"}) \
-                    .eq("id_carrito", carrito_id) \
-                    .execute()
-                print(f"[CONFIRMAR_COMPRA] Estado de carrito actualizado a inicio")
+            carrito_data = {
+                "estado": "inicio",
+                "nombre": "progreso_cliente"
+            }
+            carrito_insert = supabase.table("carrito_compras").insert(carrito_data).execute()
+            if not carrito_insert.data:
+                raise Exception("Insert de carrito_compras no devolvio datos")
+            carrito_id = carrito_insert.data[0]["id_carrito"]
+            print(f"[CONFIRMAR_COMPRA] Carrito creado: {carrito_id} para cliente: {cliente_id}")
         except Exception as e:
-            print(f"[CONFIRMAR_COMPRA] ERROR verificando/creando carrito: {str(e)}")
+            print(f"[CONFIRMAR_COMPRA] ERROR creando carrito: {str(e)}")
             return jsonify({
                 "success": False,
-                "message": f"Error verificando/creando carrito: {str(e)}"
+                "message": f"Error creando carrito: {str(e)}"
             }), 500
 
 
