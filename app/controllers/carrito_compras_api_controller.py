@@ -370,7 +370,12 @@ def auto_delete_pedido_entregado_cliente(carrito_id):
         except Exception:
             pass
 
-        # Eliminar carrito
+        # Eliminar carrito — venta.carrito_id tiene FK hacia carrito_compras;
+        # primero se desvincula la venta (se conserva, solo pierde el carrito_id).
+        try:
+            supabase.table('venta').update({'carrito_id': None}).eq('carrito_id', carrito_id).execute()
+        except Exception:
+            pass
         supabase.table('carrito_compras').delete().eq('id_carrito', carrito_id).execute()
 
         return jsonify({

@@ -27,25 +27,34 @@ def finalizar_entrega_completa(notificacion_id: str, cortes_data: Dict[str, Any]
 
         print(f"Finalizando entrega: notificacion_id={notificacion_id}, carrito_id={carrito_id}")
 
-        # 2. Obtener cortes para contar
+        # 2. Obtener cortes para contar — 'cortes' ya no tiene carrito_id propio,
+        # se relaciona vía venta_id (venta.carrito_id -> venta.id_venta -> cortes.venta_id).
         cortes_cliente = []
         try:
-            cortes_result = supabase.table("cortes") \
-                .select("*") \
+            ventas_result = supabase.table("venta") \
+                .select("id_venta") \
                 .eq("carrito_id", carrito_id) \
                 .execute()
-            cortes_cliente = cortes_result.data or []
+            venta_ids = [v.get("id_venta") for v in (ventas_result.data or []) if v.get("id_venta")]
+
+            if venta_ids:
+                cortes_result = supabase.table("cortes") \
+                    .select("*") \
+                    .in_("venta_id", venta_ids) \
+                    .execute()
+                cortes_cliente = cortes_result.data or []
             print(f"Se encontraron {len(cortes_cliente)} cortes para eliminar")
         except Exception as e:
             print(f"Advertencia obtener cortes: {str(e)}")
             cortes_cliente = []
+            venta_ids = []
 
         # 3. Eliminar CORTES
         try:
-            if cortes_cliente:
+            if cortes_cliente and venta_ids:
                 supabase.table("cortes") \
                     .delete() \
-                    .eq("carrito_id", carrito_id) \
+                    .in_("venta_id", venta_ids) \
                     .execute()
                 print(f"Eliminados {len(cortes_cliente)} cortes")
         except Exception as e:

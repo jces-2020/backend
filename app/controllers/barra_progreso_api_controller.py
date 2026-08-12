@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, render_template
 from services.supabase_client import supabase
 from controllers.carrito_compras_api_controller import verify_jwt
-from typing import Optional
+from typing import Optional, List
 from services.servicio_finalizacion_service import guardar_servicio_completado
 import os
 import json
@@ -115,6 +115,50 @@ def _vincular_notificacion_servicio(notificacion_id: Optional[str], carrito_id: 
         print(f"[WARN] No se pudo vincular notificación de servicio {notificacion_id} al carrito {carrito_id}: {exc}")
 
 
+def _carrito_id_de_notificacion(notificacion_id: Optional[str]) -> Optional[str]:
+    """Lee el carrito_id ya vinculado a una notificación (guardado por _vincular_notificacion_servicio)."""
+    if not notificacion_id:
+        return None
+    try:
+        nres = supabase.table('notificacion').select('descripcion').eq('id_notificacion', notificacion_id).limit(1).execute()
+        notif = (getattr(nres, 'data', None) or [None])[0] or {}
+        descripcion_actual = notif.get('descripcion')
+        if isinstance(descripcion_actual, dict):
+            return descripcion_actual.get('carrito_id')
+        if isinstance(descripcion_actual, str) and descripcion_actual.strip():
+            try:
+                loaded = json.loads(descripcion_actual.strip())
+                if isinstance(loaded, dict):
+                    return loaded.get('carrito_id')
+            except Exception:
+                return None
+    except Exception:
+        return None
+    return None
+
+
+def _carrito_ids_servicio_de_cliente(cliente_id: str) -> List[str]:
+    """Carritos de tipo servicio de un cliente, resueltos vía 'venta' (carrito_compras ya no tiene cliente_id)."""
+    try:
+        ventas_res = supabase.table('venta') \
+            .select('carrito_id, tipo_venta_id') \
+            .eq('cliente_id', cliente_id) \
+            .execute()
+    except Exception:
+        return []
+
+    carrito_ids = []
+    seen = set()
+    for row in (getattr(ventas_res, 'data', None) or []):
+        tipo_venta_id = str(row.get('tipo_venta_id') or '').strip()
+        cid = row.get('carrito_id')
+        if not cid or cid in seen or not tipo_venta_id or tipo_venta_id == TIPO_VENTA_ID_PRODUCTO:
+            continue
+        seen.add(cid)
+        carrito_ids.append(cid)
+    return carrito_ids
+
+
 @barra_progreso_api.route('/api/barra_progreso/servicio/iniciar', methods=['POST'])
 def iniciar_progreso_servicio():
     """Inicia (o reactiva) la barra de servicio para un cliente en carrito_compras.
@@ -136,18 +180,22 @@ def iniciar_progreso_servicio():
                 'message': 'Cliente no existe en tabla cliente. No se crea carrito de servicio.'
             }), 200
 
-        # Buscar un registro existente de tipo servicio.
-        existente = supabase.table('carrito_compras') \
-            .select('id_carrito, estado, nombre') \
-            .eq('cliente_id', cliente_id_resuelto) \
-            .eq('nombre', 'servicio') \
-            .limit(1) \
-            .execute()
+        # carrito_compras ya no tiene cliente_id/nombre: el carrito de un
+        # servicio se identifica vía la propia notificación (descripcion.carrito_id).
+        carrito_id_existente = _carrito_id_de_notificacion(notificacion_id)
+        if carrito_id_existente:
+            existente = supabase.table('carrito_compras') \
+                .select('id_carrito, estado') \
+                .eq('id_carrito', carrito_id_existente) \
+                .limit(1) \
+                .execute()
+        else:
+            existente = None
 
-        if existente.data:
-            carrito_id = existente.data[0].get('id_carrito')
+        if existente and existente.data:
+            carrito_id = carrito_id_existente
             upd = supabase.table('carrito_compras') \
-                .update({'estado': 'inicio', 'nombre': 'servicio'}) \
+                .update({'estado': 'inicio'}) \
                 .eq('id_carrito', carrito_id) \
                 .execute()
             _vincular_notificacion_servicio(notificacion_id, carrito_id)
@@ -160,9 +208,7 @@ def iniciar_progreso_servicio():
             }), 200
 
         nuevo = supabase.table('carrito_compras').insert({
-            'cliente_id': cliente_id_resuelto,
             'estado': 'inicio',
-            'nombre': 'servicio'
         }).execute()
         try:
             carrito_id = (getattr(nuevo, 'data', None) or [None])[0].get('id_carrito') if getattr(nuevo, 'data', None) else None
@@ -199,11 +245,23 @@ def actualizar_estado_servicio():
                 'message': 'Cliente no existe en tabla cliente. No se actualiza servicio.'
             }), 200
 
+        # carrito_compras ya no tiene cliente_id/nombre: los carritos de
+        # servicio de este cliente se resuelven vía venta (mismo criterio que
+        # usa GET /api/barra_progreso/servicio/<cliente_id>).
+        carrito_ids = _carrito_ids_servicio_de_cliente(cliente_id_resuelto)
+
+        if not carrito_ids:
+            return jsonify({
+                'success': True,
+                'actualizado': False,
+                'cliente_encontrado': True,
+                'message': 'No se encontró servicio para actualizar'
+            }), 200
+
         # Cambiar a estado objetivo solo los servicios en inicio.
         upd = supabase.table('carrito_compras') \
             .update({'estado': estado_objetivo}) \
-            .eq('cliente_id', cliente_id_resuelto) \
-            .ilike('nombre', '%servicio%') \
+            .in_('id_carrito', carrito_ids) \
             .eq('estado', 'inicio') \
             .execute()
 
@@ -211,16 +269,9 @@ def actualizar_estado_servicio():
 
         # Fallback: si no había en inicio pero sí existe servicio, forzar estado en el primero.
         if afectados == 0:
-            srv = supabase.table('carrito_compras') \
-                .select('id_carrito') \
-                .eq('cliente_id', cliente_id_resuelto) \
-                .ilike('nombre', '%servicio%') \
-                .limit(1) \
-                .execute()
-            if srv.data:
-                carrito_id = srv.data[0].get('id_carrito')
-                supabase.table('carrito_compras').update({'estado': estado_objetivo}).eq('id_carrito', carrito_id).execute()
-                afectados = 1
+            carrito_id = carrito_ids[0]
+            supabase.table('carrito_compras').update({'estado': estado_objetivo}).eq('id_carrito', carrito_id).execute()
+            afectados = 1
 
         return jsonify({
             'success': True,

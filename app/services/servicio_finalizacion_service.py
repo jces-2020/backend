@@ -7,6 +7,8 @@ import threading
 import time
 from services.supabase_client import supabase
 
+TIPO_VENTA_ID_PRODUCTO = "1397cefc-c5da-42bc-be75-a3ac36a2266d"
+
 
 def guardar_servicio_completado(
     carrito_id: Optional[str],
@@ -115,20 +117,31 @@ def guardar_servicio_completado(
                 except Exception:
                     pass
 
-            # Fallback por cliente + tipo SERVICIO
-            tipos_servicio = ["SERVICIO", "servicio"]
-            for t in tipos_servicio:
-                try:
-                    res_notif = supabase.table("notificacion") \
-                        .select("id_notificacion") \
-                        .eq("id_cliente", cliente_id) \
-                        .eq("tipo", t) \
-                        .execute()
-                    for n in (res_notif.data or []):
-                        supabase.table("notificacion").delete().eq("id_notificacion", n.get("id_notificacion")).execute()
-                        eliminadas += 1
-                except Exception:
-                    pass
+            # Fallback por cliente + tipo SERVICIO — 'notificacion' no tiene
+            # id_cliente propio, se resuelve vía venta_id (venta.cliente_id).
+            try:
+                ventas_cliente = supabase.table("venta") \
+                    .select("id_venta") \
+                    .eq("cliente_id", cliente_id) \
+                    .execute()
+                venta_ids_cliente = [v.get("id_venta") for v in (ventas_cliente.data or []) if v.get("id_venta")]
+            except Exception:
+                venta_ids_cliente = []
+
+            if venta_ids_cliente:
+                tipos_servicio = ["SERVICIO", "servicio"]
+                for t in tipos_servicio:
+                    try:
+                        res_notif = supabase.table("notificacion") \
+                            .select("id_notificacion") \
+                            .in_("venta_id", venta_ids_cliente) \
+                            .eq("tipo", t) \
+                            .execute()
+                        for n in (res_notif.data or []):
+                            supabase.table("notificacion").delete().eq("id_notificacion", n.get("id_notificacion")).execute()
+                            eliminadas += 1
+                    except Exception:
+                        pass
 
             print(f"[SUCCESS] Limpieza de notificaciones completada. Eliminadas: {eliminadas}")
         except Exception as e:
@@ -147,16 +160,22 @@ def guardar_servicio_completado(
 
 
 def _resolver_carrito_servicio(cliente_id: str) -> Optional[str]:
-    """Busca carrito de servicio activo para el cliente."""
+    """Busca carrito de servicio activo para el cliente.
+
+    carrito_compras ya no tiene cliente_id/nombre: se resuelve vía venta
+    (cliente_id + tipo_venta_id distinto al de producto).
+    """
     try:
-        res = supabase.table("carrito_compras") \
-            .select("id_carrito") \
+        res = supabase.table("venta") \
+            .select("carrito_id, tipo_venta_id, fecha_venta") \
             .eq("cliente_id", cliente_id) \
-            .ilike("nombre", "%servicio%") \
-            .limit(1) \
+            .order("fecha_venta", desc=True) \
             .execute()
-        if res.data:
-            return res.data[0].get("id_carrito")
+        for row in (res.data or []):
+            tipo_venta_id = str(row.get("tipo_venta_id") or "").strip()
+            carrito_id = row.get("carrito_id")
+            if carrito_id and tipo_venta_id and tipo_venta_id != TIPO_VENTA_ID_PRODUCTO:
+                return carrito_id
         return None
     except Exception:
         return None
@@ -231,21 +250,32 @@ def _limpiar_carrito_y_cortes_despues_delay(carrito_id: str, delay_seconds: int)
 
         print(f"[LIMPIEZA DIFERIDA] Iniciando limpieza de carrito {carrito_id}")
 
-        # Eliminar cortes asociados
+        # Eliminar cortes asociados — 'cortes' ya no tiene carrito_id propio,
+        # se relaciona vía venta_id (venta.carrito_id -> venta.id_venta -> cortes.venta_id).
         try:
-            cortes_result = supabase.table("cortes").select("id_corte").eq("carrito_id", carrito_id).execute()
-            cortes = cortes_result.data or []
-            if cortes:
-                for corte in cortes:
-                    supabase.table("cortes").delete().eq("id_corte", corte.get("id_corte")).execute()
-                print(f"[LIMPIEZA DIFERIDA] Cortes eliminados: {len(cortes)}")
+            ventas_result = supabase.table("venta").select("id_venta").eq("carrito_id", carrito_id).execute()
+            venta_ids = [v.get("id_venta") for v in (ventas_result.data or []) if v.get("id_venta")]
+
+            cortes = []
+            if venta_ids:
+                cortes_result = supabase.table("cortes").select("id_corte").in_("venta_id", venta_ids).execute()
+                cortes = cortes_result.data or []
+                if cortes:
+                    supabase.table("cortes").delete().in_("venta_id", venta_ids).execute()
+                    print(f"[LIMPIEZA DIFERIDA] Cortes eliminados: {len(cortes)}")
+                else:
+                    print("[LIMPIEZA DIFERIDA] Sin cortes para eliminar")
             else:
-                print("[LIMPIEZA DIFERIDA] Sin cortes para eliminar")
+                print("[LIMPIEZA DIFERIDA] Sin ventas asociadas al carrito")
         except Exception as e:
             print(f"[WARN] [LIMPIEZA DIFERIDA] Error eliminando cortes: {e}")
+            venta_ids = []
 
-        # Eliminar carrito
+        # Eliminar carrito — venta.carrito_id tiene FK hacia carrito_compras;
+        # primero se desvincula la venta (no se borra, solo pierde el carrito_id).
         try:
+            if venta_ids:
+                supabase.table("venta").update({"carrito_id": None}).eq("carrito_id", carrito_id).execute()
             supabase.table("carrito_compras").delete().eq("id_carrito", carrito_id).execute()
             print(f"[LIMPIEZA DIFERIDA] Carrito eliminado: {carrito_id}")
         except Exception as e:
