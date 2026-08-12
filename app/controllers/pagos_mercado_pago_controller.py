@@ -929,10 +929,10 @@ def confirmar_compra():
 
 
         # Crear un carrito_compras nuevo por cada compra confirmada (una barra de progreso por compra).
+        # carrito_compras solo tiene id_carrito/estado; nombre y cliente_id ya no existen ahí.
         try:
             carrito_data = {
                 "estado": "inicio",
-                "nombre": "progreso_cliente"
             }
             carrito_insert = supabase.table("carrito_compras").insert(carrito_data).execute()
             if not carrito_insert.data:

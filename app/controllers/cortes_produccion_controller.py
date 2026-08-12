@@ -341,20 +341,31 @@ def get_cortes_por_notificacion(notificacion_id):
         
         # 1. Obtener notificación
         notif_result = supabase.table("notificacion") \
-            .select("descripcion, id_cliente") \
+            .select("descripcion, venta_id") \
             .eq("id_notificacion", notificacion_id) \
             .limit(1) \
             .execute()
-        
+
         if not notif_result.data:
             return jsonify({
                 "success": False,
                 "error": "Notificación no encontrada"
             }), 404
-        
+
         notif = notif_result.data[0]
         descripcion = notif.get("descripcion", "{}")
-        
+
+        # 'notificacion' no tiene id_cliente propio; se resuelve vía venta_id.
+        cliente_id = None
+        venta_id = notif.get("venta_id")
+        if venta_id:
+            try:
+                venta_res = supabase.table("venta").select("cliente_id").eq("id_venta", venta_id).limit(1).execute()
+                if venta_res.data:
+                    cliente_id = venta_res.data[0].get("cliente_id")
+            except Exception:
+                cliente_id = None
+
         # 2. Obtener carrito_id desde JSON o texto libre
         carrito_id = None
         try:
@@ -376,7 +387,7 @@ def get_cortes_por_notificacion(notificacion_id):
                 "message": "El cliente no agregó cortes",
                 "productos": [],
                 "total_productos": 0,
-                "cliente_id": notif.get("id_cliente"),
+                "cliente_id": cliente_id,
                 "carrito_id": None
             }), 200
         
@@ -385,7 +396,7 @@ def get_cortes_por_notificacion(notificacion_id):
         
         if resultado.get("success"):
             # Agregar información de cliente
-            resultado["cliente_id"] = notif.get("id_cliente")
+            resultado["cliente_id"] = cliente_id
             resultado["carrito_id"] = carrito_id
             if not resultado.get("productos"):
                 resultado["message"] = "El cliente no agregó cortes"
@@ -396,7 +407,7 @@ def get_cortes_por_notificacion(notificacion_id):
             "message": "El cliente no agregó cortes",
             "productos": [],
             "total_productos": 0,
-            "cliente_id": notif.get("id_cliente"),
+            "cliente_id": cliente_id,
             "carrito_id": carrito_id
         }), 200
     
