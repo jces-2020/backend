@@ -87,7 +87,7 @@ def _optimizar_vidrio(
                 "cortes": cortes,
                 "permitir_rotacion": permitir_rotacion
             },
-            timeout=30
+            timeout=120
         )
 
         if response.status_code == 200:
