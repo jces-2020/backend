@@ -70,17 +70,40 @@ def upsert_detalle(categoria_id):
 
 @categoria_detalle_bp.route('/api/categorias/detalles', methods=['GET'])
 def get_todos_detalles():
-    """Devuelve todos los detalles con el nombre de su categoría."""
+    """
+    Devuelve, por categoría, las medidas máximas de plancha/barra disponibles.
+
+    'categoria_detalle' (un registro por categoría) ya no existe: las medidas
+    ahora se guardan por producto en 'detalle_producto'. Acá se agregan
+    (tomando el máximo) para mantener el mismo formato de respuesta que
+    esperan los consumidores existentes (medida "techo" por categoría).
+    """
     try:
-        resp = supabase.table('categoria_detalle') \
-            .select('*, categoria:categoria_id (id_categoria, descripcion)') \
+        resp = supabase.table('detalle_producto') \
+            .select('plancha_ancho_cm, plancha_alto_cm, barra_largo_cm, '
+                     'productos!inner(categoria_id, categoria(id_categoria, descripcion))') \
             .execute()
-        data = resp.data or []
-        # Aplanar: agregar categoria_nombre al nivel raíz
-        for row in data:
-            cat = row.pop('categoria', None) or {}
-            row['categoria_nombre'] = (cat.get('descripcion') or '').upper()
-        return jsonify({'success': True, 'data': data}), 200
+        rows = resp.data or []
+
+        agregados = {}
+        for row in rows:
+            producto = row.get('productos') or {}
+            categoria_id = producto.get('categoria_id')
+            if not categoria_id:
+                continue
+            categoria = producto.get('categoria') or {}
+            acc = agregados.setdefault(categoria_id, {
+                'categoria_id': categoria_id,
+                'categoria_nombre': (categoria.get('descripcion') or '').upper(),
+                'plancha_ancho_cm': 0,
+                'plancha_alto_cm': 0,
+                'barra_largo_cm': 0,
+            })
+            acc['plancha_ancho_cm'] = max(acc['plancha_ancho_cm'], float(row.get('plancha_ancho_cm') or 0))
+            acc['plancha_alto_cm'] = max(acc['plancha_alto_cm'], float(row.get('plancha_alto_cm') or 0))
+            acc['barra_largo_cm'] = max(acc['barra_largo_cm'], float(row.get('barra_largo_cm') or 0))
+
+        return jsonify({'success': True, 'data': list(agregados.values())}), 200
     except Exception as e:
         _log_error('GET /detalles', None, e)
         return jsonify({'success': False, 'error': str(e)}), 500

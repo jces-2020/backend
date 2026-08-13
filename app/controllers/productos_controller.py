@@ -224,7 +224,7 @@ def buscar_por_codigo(codigo):
 @productos_bp.route('/por-nombre/<nombre_producto>', methods=['GET'])
 def obtener_producto_por_nombre(nombre_producto):
     try:
-        resp = supabase.table('productos').select('*').ilike('nombre', f'%{nombre_producto}%').execute()
+        resp = supabase.table('productos').select('*, detalle_producto(*)').ilike('nombre', f'%{nombre_producto}%').execute()
         if not resp.data:
             return jsonify({'success': False, 'message': 'Producto no encontrado'}), 404
         return jsonify({'success': True, 'producto': resp.data[0]}), 200

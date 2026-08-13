@@ -22,19 +22,19 @@ def _upsert_detalle_producto(producto_id, payload):
     if not payload:
         return None
 
-    existe = supabase.table('producto_detalle') \
+    existe = supabase.table('detalle_producto') \
         .select('id') \
         .eq('producto_id', producto_id) \
         .limit(1) \
         .execute()
 
     if getattr(existe, 'data', None):
-        resp = supabase.table('producto_detalle') \
+        resp = supabase.table('detalle_producto') \
             .update(payload) \
             .eq('producto_id', producto_id) \
             .execute()
     else:
-        resp = supabase.table('producto_detalle') \
+        resp = supabase.table('detalle_producto') \
             .insert({**payload, 'producto_id': producto_id}) \
             .execute()
 
@@ -44,7 +44,7 @@ def _upsert_detalle_producto(producto_id, payload):
 @producto_detalle_bp.route('/api/productos/<producto_id>/detalle', methods=['GET'])
 def get_detalle(producto_id):
     try:
-        resp = supabase.table('producto_detalle') \
+        resp = supabase.table('detalle_producto') \
             .select('*') \
             .eq('producto_id', producto_id) \
             .limit(1) \
