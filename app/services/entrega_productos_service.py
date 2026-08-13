@@ -125,16 +125,59 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                 "carrito_id": "",
             }
 
-        productos, _, _ = obtener_detalle_venta_por_carrito(carrito_id)
-        productos = productos or []
+        items_venta, _, _ = obtener_detalle_venta_por_carrito(carrito_id)
+        items_venta = items_venta or []
 
-        productos_map = {}
-        for p in productos:
-            pid = p.get("producto_id")
-            if pid:
-                productos_map[pid] = p
-            if not p.get("origen"):
-                p["origen"] = "plancha"
+        # Filas "plancha": una por línea de venta de producto completo.
+        # Filas "corte": el mismo producto puede tener varias piezas cortadas
+        # (una venta por corte), pero acá se agrupan en UNA sola fila por
+        # producto -- el detalle pieza por pieza se ve en el tab CORTES.
+        productos = []
+        cortes_agrupados = {}
+        for item in items_venta:
+            pid = item.get("producto_id") or item.get("id_producto")
+            if not pid:
+                continue
+            if item.get("tipo_item") == "corte":
+                grupo = cortes_agrupados.get(pid)
+                if not grupo:
+                    grupo = {
+                        "producto_id": pid,
+                        "nombre": item.get("nombre"),
+                        "descripcion": item.get("descripcion"),
+                        "codigo": item.get("codigo"),
+                        "grosor": item.get("grosor"),
+                        "precio_unitario": item.get("precio_unitario") or 0,
+                        "categoria": item.get("categoria"),
+                        "almacen_fila": item.get("almacen_fila") or item.get("fila"),
+                        "almacen_columna": item.get("almacen_columna") or item.get("columna"),
+                        "stock_cantidad": item.get("stock_cantidad") or 0,
+                        "cantidad_cliente": 1,
+                        "subtotal": 0.0,
+                        "origen": "corte",
+                    }
+                    cortes_agrupados[pid] = grupo
+                grupo["subtotal"] = round((grupo.get("subtotal") or 0) + float(item.get("subtotal") or 0), 2)
+            else:
+                productos.append({
+                    "producto_id": pid,
+                    "nombre": item.get("nombre"),
+                    "descripcion": item.get("descripcion"),
+                    "codigo": item.get("codigo"),
+                    "grosor": item.get("grosor"),
+                    "precio_unitario": item.get("precio_unitario") or 0,
+                    "categoria": item.get("categoria"),
+                    "almacen_fila": item.get("almacen_fila") or item.get("fila"),
+                    "almacen_columna": item.get("almacen_columna") or item.get("columna"),
+                    "stock_cantidad": item.get("stock_cantidad") or 0,
+                    "cantidad_cliente": item.get("cantidad") or 0,
+                    "subtotal": item.get("subtotal") or 0,
+                    "origen": "plancha",
+                })
+
+        productos.extend(cortes_agrupados.values())
+
+        productos_map = {p.get("producto_id"): p for p in productos if p.get("producto_id")}
 
         reporte_tmp = obtener_reporte_temporal(notificacion_id)
         if reporte_tmp.get("success"):

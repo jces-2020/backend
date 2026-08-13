@@ -86,9 +86,12 @@ def obtener_detalle_venta_por_carrito(carrito_id: str) -> Tuple[List[Dict[str, A
     productos_map: Dict[str, Dict[str, Any]] = {}
     if producto_ids:
         try:
+            # 'productos' no tiene columnas fila/columna propias: se ubican en
+            # 'almacen' via almacen_id. Pedirlas directo (como antes) rompía la
+            # consulta entera y dejaba productos_map vacío para TODOS los items.
             productos = (
                 supabase.table("productos")
-                .select("id_producto,nombre,codigo,descripcion,grosor,precio_unitario,fila,columna")
+                .select("id_producto,nombre,codigo,descripcion,grosor,precio_unitario,cantidad,categoria_id,categoria(descripcion),almacen(fila,columna)")
                 .in_("id_producto", producto_ids)
                 .execute()
             )
@@ -127,6 +130,12 @@ def obtener_detalle_venta_por_carrito(carrito_id: str) -> Tuple[List[Dict[str, A
         venta_id = str(venta.get("id_venta") or "")
         producto_id = str(venta.get("producto_id") or "")
         producto = productos_map.get(producto_id, {})
+        almacen = producto.get("almacen") or {}
+        categoria = producto.get("categoria") or {}
+        fila = almacen.get("fila")
+        columna = almacen.get("columna")
+        categoria_desc = categoria.get("descripcion") if isinstance(categoria, dict) else None
+        stock_cantidad = producto.get("cantidad") or 0
         cantidad = float(venta.get("cantidad") or 0)
         monto = float(venta.get("monto") or 0)
 
@@ -152,11 +161,16 @@ def obtener_detalle_venta_por_carrito(carrito_id: str) -> Tuple[List[Dict[str, A
                     "tipo_item": "corte",
                     "id_venta": venta_id,
                     "id_producto": producto_id,
+                    "producto_id": producto_id,
                     "nombre": producto.get("nombre") or "Cortes personalizados",
                     "codigo": producto.get("codigo"),
                     "cantidad": float(corte.get("cantidad") or cantidad or 0),
-                    "fila": producto.get("fila"),
-                    "columna": producto.get("columna"),
+                    "fila": fila,
+                    "columna": columna,
+                    "almacen_fila": fila,
+                    "almacen_columna": columna,
+                    "categoria": categoria_desc,
+                    "stock_cantidad": stock_cantidad,
                     "precio_unitario": precio_unitario,
                     "subtotal": round(subtotal, 2),
                     "grosor": producto.get("grosor"),
@@ -177,11 +191,16 @@ def obtener_detalle_venta_por_carrito(carrito_id: str) -> Tuple[List[Dict[str, A
             "tipo_item": "plancha",
             "id_venta": venta_id,
             "id_producto": producto_id,
+            "producto_id": producto_id,
             "nombre": producto.get("nombre"),
             "codigo": producto.get("codigo"),
             "cantidad": cantidad,
-            "fila": producto.get("fila"),
-            "columna": producto.get("columna"),
+            "fila": fila,
+            "columna": columna,
+            "almacen_fila": fila,
+            "almacen_columna": columna,
+            "categoria": categoria_desc,
+            "stock_cantidad": stock_cantidad,
             "precio_unitario": float(producto.get("precio_unitario") or 0),
             "subtotal": round(subtotal, 2),
             "grosor": producto.get("grosor"),
