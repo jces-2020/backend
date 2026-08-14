@@ -20,7 +20,9 @@ def calcular_cortes_optimizados(
     plancha_alto: float = 300.0,
     barra_largo: float = 300.0,
     permitir_rotacion: bool = True,
-    min_retazo: float = 20.0
+    min_retazo: float = 20.0,
+    orientacion: str = "auto",
+    objetivo: str = "eficiencia",
 ) -> Dict[str, Any]:
     """
     Calcula la optimización de cortes llamando al backend de optimización.
@@ -33,13 +35,15 @@ def calcular_cortes_optimizados(
         barra_largo: Largo de barra para aluminio (cm)
         permitir_rotacion: Permitir rotar piezas en vidrio
         min_retazo: Largo mínimo de retazo útil para aluminio (cm)
+        orientacion: "auto" | "horizontal" | "vertical" (solo vidrio)
+        objetivo: "eficiencia" | "menos_planchas" | "retazo_util" (solo vidrio)
 
     Returns:
         Diccionario con planchas/barras, cortes, retazos y eficiencia
     """
     try:
         if tipo_material.lower() == "vidrio":
-            return _optimizar_vidrio(productos, plancha_ancho, plancha_alto, permitir_rotacion)
+            return _optimizar_vidrio(productos, plancha_ancho, plancha_alto, permitir_rotacion, orientacion, objetivo)
         elif tipo_material.lower() == "aluminio":
             return _optimizar_aluminio(productos, barra_largo, min_retazo)
         else:
@@ -54,7 +58,9 @@ def _optimizar_vidrio(
     productos: List[Dict[str, Any]],
     plancha_ancho: float,
     plancha_alto: float,
-    permitir_rotacion: bool
+    permitir_rotacion: bool,
+    orientacion: str = "auto",
+    objetivo: str = "eficiencia",
 ) -> Dict[str, Any]:
     """
     Llama al endpoint de optimización de vidrio.
@@ -85,7 +91,9 @@ def _optimizar_vidrio(
                 "plancha_ancho": plancha_ancho,
                 "plancha_alto": plancha_alto,
                 "cortes": cortes,
-                "permitir_rotacion": permitir_rotacion
+                "permitir_rotacion": permitir_rotacion,
+                "orientacion": orientacion,
+                "objetivo": objetivo
             },
             timeout=120
         )

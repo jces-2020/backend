@@ -28,7 +28,9 @@ def calcular_optimizacion():
         "plancha_alto"?: float (default 300),
         "barra_largo"?: float (default 300),
         "permitir_rotacion"?: bool (default true),
-        "min_retazo"?: float (default 20)
+        "min_retazo"?: float (default 20),
+        "orientacion"?: "auto" | "horizontal" | "vertical" (default "auto", solo vidrio),
+        "objetivo"?: "eficiencia" | "menos_planchas" | "retazo_util" (default "eficiencia", solo vidrio)
     }
     """
     try:
@@ -45,6 +47,8 @@ def calcular_optimizacion():
         barra_largo = float(data.get("barra_largo", 300.0))
         permitir_rotacion = data.get("permitir_rotacion", True)
         min_retazo = float(data.get("min_retazo", 20.0))
+        orientacion = data.get("orientacion", "auto")
+        objetivo = data.get("objetivo", "eficiencia")
 
         resultado = calcular_cortes_optimizados(
             productos=productos,
@@ -53,7 +57,9 @@ def calcular_optimizacion():
             plancha_alto=plancha_alto,
             barra_largo=barra_largo,
             permitir_rotacion=permitir_rotacion,
-            min_retazo=min_retazo
+            min_retazo=min_retazo,
+            orientacion=orientacion,
+            objetivo=objetivo
         )
 
         if resultado.get("success"):
