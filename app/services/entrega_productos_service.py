@@ -134,6 +134,7 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
         # producto -- el detalle pieza por pieza se ve en el tab CORTES.
         productos = []
         cortes_agrupados = {}
+        planchas_agrupadas = {}
         for item in items_venta:
             pid = item.get("producto_id") or item.get("id_producto")
             if not pid:
@@ -159,23 +160,32 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                     cortes_agrupados[pid] = grupo
                 grupo["subtotal"] = round((grupo.get("subtotal") or 0) + float(item.get("subtotal") or 0), 2)
             else:
-                productos.append({
-                    "producto_id": pid,
-                    "nombre": item.get("nombre"),
-                    "descripcion": item.get("descripcion"),
-                    "codigo": item.get("codigo"),
-                    "grosor": item.get("grosor"),
-                    "precio_unitario": item.get("precio_unitario") or 0,
-                    "categoria": item.get("categoria"),
-                    "almacen_fila": item.get("almacen_fila") or item.get("fila"),
-                    "almacen_columna": item.get("almacen_columna") or item.get("columna"),
-                    "stock_cantidad": item.get("stock_cantidad") or 0,
-                    "cantidad_cliente": item.get("cantidad") or 0,
-                    "subtotal": item.get("subtotal") or 0,
-                    "origen": "plancha",
-                })
+                # Agrupar por producto_id: un mismo producto puede venir en
+                # varias lineas de venta y no debe mostrarse como filas
+                # duplicadas (rompe la seleccion "todos" en el frontend).
+                grupo = planchas_agrupadas.get(pid)
+                if not grupo:
+                    grupo = {
+                        "producto_id": pid,
+                        "nombre": item.get("nombre"),
+                        "descripcion": item.get("descripcion"),
+                        "codigo": item.get("codigo"),
+                        "grosor": item.get("grosor"),
+                        "precio_unitario": item.get("precio_unitario") or 0,
+                        "categoria": item.get("categoria"),
+                        "almacen_fila": item.get("almacen_fila") or item.get("fila"),
+                        "almacen_columna": item.get("almacen_columna") or item.get("columna"),
+                        "stock_cantidad": item.get("stock_cantidad") or 0,
+                        "cantidad_cliente": 0,
+                        "subtotal": 0.0,
+                        "origen": "plancha",
+                    }
+                    planchas_agrupadas[pid] = grupo
+                grupo["cantidad_cliente"] = (grupo.get("cantidad_cliente") or 0) + (item.get("cantidad") or 0)
+                grupo["subtotal"] = round((grupo.get("subtotal") or 0) + float(item.get("subtotal") or 0), 2)
 
         productos.extend(cortes_agrupados.values())
+        productos.extend(planchas_agrupadas.values())
 
         productos_map = {p.get("producto_id"): p for p in productos if p.get("producto_id")}
 

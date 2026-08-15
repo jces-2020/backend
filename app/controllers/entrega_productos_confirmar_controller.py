@@ -13,14 +13,16 @@ def confirmar_productos():
     POST /api/entrega/productos/confirmar
     Body: {
       "carrito_id": "uuid",
-      "items": [{"producto_id": "uuid", "cantidad": 1}, ...]
+      "items": [{"producto_id": "uuid", "cantidad": 1}, ...],
+      "planchas": [{"producto_id": "uuid", "cantidad": 2}, ...]
     }
     """
     try:
         data = request.get_json()
         carrito_id = data.get('carrito_id')
         items = data.get('items', [])
-        
+        planchas = data.get('planchas', [])
+
         if not carrito_id or not items:
             return jsonify({
                 "success": False,
@@ -37,7 +39,7 @@ def confirmar_productos():
         
         notificacion_id = notif_result.data[0].get("id_notificacion") if notif_result.data else None
         
-        result = confirmar_productos_entregados(carrito_id, items)
+        result = confirmar_productos_entregados(carrito_id, items, planchas)
         
         if result.get("success"):
             result["notificacion_id"] = notificacion_id
