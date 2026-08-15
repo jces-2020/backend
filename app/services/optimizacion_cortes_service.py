@@ -23,6 +23,7 @@ def calcular_cortes_optimizados(
     min_retazo: float = 20.0,
     orientacion: str = "auto",
     objetivo: str = "eficiencia",
+    rotar_plancha: str = "auto",
 ) -> Dict[str, Any]:
     """
     Calcula la optimización de cortes llamando al backend de optimización.
@@ -37,13 +38,14 @@ def calcular_cortes_optimizados(
         min_retazo: Largo mínimo de retazo útil para aluminio (cm)
         orientacion: "auto" | "horizontal" | "vertical" (solo vidrio)
         objetivo: "eficiencia" | "menos_planchas" | "retazo_util" (solo vidrio)
+        rotar_plancha: "auto" | "si" | "no" — gira la plancha completa 90° (solo vidrio)
 
     Returns:
         Diccionario con planchas/barras, cortes, retazos y eficiencia
     """
     try:
         if tipo_material.lower() == "vidrio":
-            return _optimizar_vidrio(productos, plancha_ancho, plancha_alto, permitir_rotacion, orientacion, objetivo)
+            return _optimizar_vidrio(productos, plancha_ancho, plancha_alto, permitir_rotacion, orientacion, objetivo, rotar_plancha)
         elif tipo_material.lower() == "aluminio":
             return _optimizar_aluminio(productos, barra_largo, min_retazo)
         else:
@@ -61,6 +63,7 @@ def _optimizar_vidrio(
     permitir_rotacion: bool,
     orientacion: str = "auto",
     objetivo: str = "eficiencia",
+    rotar_plancha: str = "auto",
 ) -> Dict[str, Any]:
     """
     Llama al endpoint de optimización de vidrio.
@@ -93,7 +96,8 @@ def _optimizar_vidrio(
                 "cortes": cortes,
                 "permitir_rotacion": permitir_rotacion,
                 "orientacion": orientacion,
-                "objetivo": objetivo
+                "objetivo": objetivo,
+                "rotar_plancha": rotar_plancha
             },
             timeout=120
         )
