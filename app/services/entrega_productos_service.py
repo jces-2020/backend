@@ -184,8 +184,20 @@ def obtener_productos_entrega_por_notificacion(notificacion_id: str) -> Dict[str
                 grupo["cantidad_cliente"] = (grupo.get("cantidad_cliente") or 0) + (item.get("cantidad") or 0)
                 grupo["subtotal"] = round((grupo.get("subtotal") or 0) + float(item.get("subtotal") or 0), 2)
 
-        productos.extend(cortes_agrupados.values())
-        productos.extend(planchas_agrupadas.values())
+        # Un mismo producto puede venir agrupado en AMBOS diccionarios (ej. el
+        # cliente compro una plancha completa y ademas se le cortaron piezas
+        # de ese mismo producto) -- se fusionan por producto_id para no
+        # mostrar dos filas seleccionables por separado con el mismo id.
+        combinados = {pid: dict(g) for pid, g in cortes_agrupados.items()}
+        for pid, g in planchas_agrupadas.items():
+            if pid in combinados:
+                combinados[pid]["cantidad_cliente"] = (combinados[pid].get("cantidad_cliente") or 0) + (g.get("cantidad_cliente") or 0)
+                combinados[pid]["subtotal"] = round((combinados[pid].get("subtotal") or 0) + (g.get("subtotal") or 0), 2)
+                combinados[pid]["origen"] = "mixto"
+            else:
+                combinados[pid] = dict(g)
+
+        productos.extend(combinados.values())
 
         productos_map = {p.get("producto_id"): p for p in productos if p.get("producto_id")}
 

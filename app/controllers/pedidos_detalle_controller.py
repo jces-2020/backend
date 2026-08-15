@@ -362,6 +362,8 @@ def obtener_cantidades_pedidos_admin():
         return jsonify({'success': True, 'cantidades': cantidades}), 200
 
     except Exception as e:
+        import traceback
+        print(f"[ERROR] obtener_cantidades_pedidos_admin: {e}\n{traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
