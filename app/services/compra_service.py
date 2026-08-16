@@ -94,12 +94,27 @@ def _descontar_stock_venta(productos_agrupados: Dict[str, float], cortes_payload
         if cantidad_vendida <= 0:
             continue
         try:
-            prod = supabase.table("productos").select("cantidad").eq("id_producto", pid).limit(1).execute()
+            prod = supabase.table("productos").select("cantidad, nombre, codigo").eq("id_producto", pid).limit(1).execute()
             if not prod.data:
                 continue
-            actual = float(prod.data[0].get("cantidad") or 0)
+            producto = prod.data[0]
+            actual = float(producto.get("cantidad") or 0)
             nueva = max(0, actual - cantidad_vendida)
             supabase.table("productos").update({"cantidad": nueva}).eq("id_producto", pid).execute()
+
+            # Notificar stock bajo/agotado a la app movil (Pusher + OneSignal),
+            # igual que hace el resto de flujos que descuentan stock.
+            try:
+                from services.pusher_service import notificar_stock_actualizado
+                notificar_stock_actualizado(
+                    producto_id=str(pid),
+                    nombre=producto.get('nombre', ''),
+                    cantidad_nueva=int(nueva),
+                    cantidad_anterior=int(actual),
+                    codigo=producto.get('codigo'),
+                )
+            except Exception as _pe:
+                print(f"[COMPRA_SERVICE] Pusher omitido: {_pe}")
         except Exception as e:
             print(f"[COMPRA_SERVICE] [!] Error descontando stock de {pid}: {str(e)}")
 
