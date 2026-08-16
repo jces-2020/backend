@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Dict, Optional
 
 from services.facturacion_service import FacturacionService
-from services.gastos_service import actualizar_subtotal_caja_por_registro_pago
+from services.gastos_service import actualizar_subtotal_caja_por_registro_pago, obtener_o_crear_caja_activa
 from services.supabase_client import supabase
 
 
@@ -88,6 +88,7 @@ class RegistroPagoComprobanteService:
 
             hoy = date.today().isoformat()
             total = round(float(monto or 0), 2)
+            caja_id_activa = obtener_o_crear_caja_activa(hoy)
 
             ventas_recientes_cliente = []
             carrito_ref = None
@@ -127,6 +128,7 @@ class RegistroPagoComprobanteService:
                                 "fecha": hoy,
                                 "total": total,
                                 "documento": documento_url,
+                                "caja_id": caja_id_activa,
                             })
                             .eq("id_registro", registro_pago_id)
                             .execute()
@@ -141,6 +143,7 @@ class RegistroPagoComprobanteService:
                     "fecha": hoy,
                     "total": total,
                     "documento": documento_url,
+                    "caja_id": caja_id_activa,
                 }).execute()
                 registro = (registro_insert.data or [None])[0]
 

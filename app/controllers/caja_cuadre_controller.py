@@ -55,18 +55,36 @@ def obtener_payload_cuadre_caja(fecha=None):
     totales = {"tarjeta": 0.0, "contado": 0.0, "yape": 0.0, "total": 0.0}
     
     try:
-        result_ventas = (
-            supabase.table("venta")
-            .select("id_venta, monto, metodo, cliente_id, registro_pago_id, fecha_venta, tipo_venta_id, caja_id")
-            .gte("fecha_venta", fecha)
-            .lt("fecha_venta", fecha_fin)
-        )
-
+        # 'caja_id' vive en 'registro_pago', no en 'venta'. Para saber que
+        # ventas pertenecen a la caja activa hay que ir primero por sus
+        # registro_pago (los pagos ya recibidos hoy en esa caja) y desde ahi
+        # llegar a las ventas via registro_pago_id.
+        registro_map = {}
+        registro_ids = []
         if caja_id_actual:
-            result_ventas = result_ventas.eq("caja_id", caja_id_actual)
+            try:
+                registros_res = (
+                    supabase.table("registro_pago")
+                    .select("id_registro, fecha, total, documento, caja_id")
+                    .eq("caja_id", caja_id_actual)
+                    .execute()
+                )
+                for reg in registros_res.data or []:
+                    registro_map[reg.get("id_registro")] = reg
+                    registro_ids.append(reg.get("id_registro"))
+            except Exception as exc_registros:  # noqa: BLE001
+                print(f"[caja_cuadre] error consultando registro_pago: {exc_registros}")
 
-        result_ventas = result_ventas.order("fecha_venta", desc=True).execute()
-        ventas = result_ventas.data or []
+        ventas = []
+        if registro_ids:
+            result_ventas = (
+                supabase.table("venta")
+                .select("id_venta, monto, metodo, cliente_id, registro_pago_id, fecha_venta, tipo_venta_id")
+                .in_("registro_pago_id", registro_ids)
+                .order("fecha_venta", desc=True)
+                .execute()
+            )
+            ventas = result_ventas.data or []
 
         # Agrupar ventas por tipo_venta_id
         for venta in ventas:
@@ -90,22 +108,6 @@ def obtener_payload_cuadre_caja(fecha=None):
                     tipo_venta_map[tipo.get("id_tipo")] = tipo.get("descripcion", "Desconocido")
             except Exception as exc_tipos:  # noqa: BLE001
                 print(f"[caja_cuadre] error consultando tipo_venta: {exc_tipos}")
-
-        # Traer comprobantes desde registro_pago
-        registro_ids = [row.get("registro_pago_id") for venta_lista in ventas_por_tipo.values() for row in venta_lista if row.get("registro_pago_id")]
-        registro_map = {}
-        if registro_ids:
-            try:
-                registros_res = (
-                    supabase.table("registro_pago")
-                    .select("id_registro, fecha, total, documento")
-                    .in_("id_registro", registro_ids)
-                    .execute()
-                )
-                for reg in registros_res.data or []:
-                    registro_map[reg.get("id_registro")] = reg
-            except Exception as exc_registros:  # noqa: BLE001
-                print(f"[caja_cuadre] error consultando registro_pago: {exc_registros}")
 
         # Traer clientes
         cliente_ids = [row.get("cliente_id") for venta_lista in ventas_por_tipo.values() for row in venta_lista if row.get("cliente_id")]

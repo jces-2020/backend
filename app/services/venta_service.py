@@ -9,12 +9,12 @@ def registrar_venta(total: float, metodo: str, caja_id: Optional[str] = None) ->
     """
     fecha_actual = date.today().isoformat()
     
-    # 1. Insertar venta
+    # 1. Insertar venta ('venta' no tiene columna caja_id -- esa vive en
+    # 'registro_pago'; el subtotal de caja se actualiza aparte en el paso 2)
     venta_payload = {
         "monto": total,
         "fecha_venta": fecha_actual,
         "metodo": metodo,
-        "caja_id": caja_id
     }
     res = supabase.table("venta").insert(venta_payload).execute()
     venta_ok = bool(res.data)

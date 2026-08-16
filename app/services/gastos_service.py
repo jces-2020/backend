@@ -4,7 +4,6 @@ Consulta Supabase para obtener gastos e ingresos del día.
 """
 
 from typing import Dict, List, Any, Optional
-from datetime import date, timedelta
 
 from services.supabase_client import supabase
 
@@ -25,6 +24,25 @@ def _obtener_caja_activa(fecha: str) -> Optional[Dict[str, Any]]:
         return cajas[0] if cajas else None
     except Exception as exc:  # noqa: BLE001
         print(f"[_obtener_caja_activa] Error: {exc}")
+        return None
+
+
+def obtener_o_crear_caja_activa(fecha: str, turno: str = "diurno") -> Optional[str]:
+    """Devuelve el id_caja activo para la fecha; si no existe, lo crea."""
+    try:
+        caja_actual = _obtener_caja_activa(fecha)
+        if caja_actual and caja_actual.get("id_caja"):
+            return caja_actual.get("id_caja")
+
+        nueva = supabase.table("caja").insert({
+            "fecha": fecha,
+            "turno": turno,
+            "subtotal": 0.0,
+        }).execute()
+        row = (nueva.data or [None])[0]
+        return (row or {}).get("id_caja")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[obtener_o_crear_caja_activa] Error: {exc}")
         return None
 
 
@@ -133,13 +151,10 @@ def get_resumen_dia(fecha: str) -> Dict[str, Any]:
 
 def actualizar_subtotal_caja_por_registro_pago(fecha: str) -> bool:
     """
-    Actualiza el subtotal de la caja activa del día usando solo las ventas vinculadas a esa caja.
-    Esto evita que una caja nueva herede el subtotal de la caja cerrada anterior.
+    Actualiza el subtotal de la caja activa del día sumando los registro_pago
+    vinculados a esa caja (caja_id vive en 'registro_pago', no en 'venta').
     """
     try:
-        fecha_inicio = date.fromisoformat(fecha)
-        fecha_fin = (fecha_inicio + timedelta(days=1)).isoformat()
-
         caja_actual = _obtener_caja_activa(fecha)
         if not caja_actual or not caja_actual.get("id_caja"):
             print(f"[actualizar_subtotal_caja] No existe caja activa para {fecha}")
@@ -147,31 +162,16 @@ def actualizar_subtotal_caja_por_registro_pago(fecha: str) -> bool:
 
         caja_id_actual = caja_actual.get("id_caja")
 
-        ventas_res = (
-            supabase.table("venta")
-            .select("id_venta, registro_pago_id, monto, caja_id")
-            .gte("fecha_venta", fecha)
-            .lt("fecha_venta", fecha_fin)
+        registros_res = (
+            supabase.table("registro_pago")
+            .select("id_registro, total")
             .eq("caja_id", caja_id_actual)
             .execute()
         )
-        ventas = ventas_res.data or []
-        registro_ids = [row.get("registro_pago_id") for row in ventas if row.get("registro_pago_id")]
+        registros_list = registros_res.data or []
+        total_caja = sum(float(r.get("total", 0) or 0) for r in registros_list)
 
-        total_caja = 0.0
-        if registro_ids:
-            registros = (
-                supabase.table("registro_pago")
-                .select("id_registro, total")
-                .in_("id_registro", registro_ids)
-                .execute()
-            )
-            registros_list = registros.data or []
-            total_caja = sum(float(r.get("total", 0) or 0) for r in registros_list)
-        else:
-            total_caja = sum(float(v.get("monto", 0) or 0) for v in ventas)
-
-        print(f"[actualizar_subtotal_caja] Fecha: {fecha}, Caja activa: {caja_id_actual}, Total caja: S/ {total_caja:.2f}, Ventas: {len(ventas)}")
+        print(f"[actualizar_subtotal_caja] Fecha: {fecha}, Caja activa: {caja_id_actual}, Total caja: S/ {total_caja:.2f}, Registros: {len(registros_list)}")
 
         supabase.table("caja").update({
             "subtotal": round(total_caja, 2)
@@ -193,5 +193,6 @@ __all__ = [
     "get_ventas_by_date",
     "create_gasto",
     "get_resumen_dia",
+    "obtener_o_crear_caja_activa",
     "actualizar_subtotal_caja_por_registro_pago"
 ]

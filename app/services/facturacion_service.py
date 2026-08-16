@@ -9,6 +9,13 @@ class FacturacionService:
     Servicio de Facturación Electrónica APISPeru
     """
 
+    # MODO PRUEBA: no llama a APISPeru (evita gastar comprobantes reales)
+    # mientras se prueba el flujo completo. El resto de la logica (payload,
+    # guardado en BD, PDF, etc.) sigue corriendo igual, solo se simula la
+    # respuesta del proveedor. Para volver a emitir comprobantes reales,
+    # poner esto en False.
+    MODO_PRUEBA = True
+
     # URL CORRECTA (el ambiente beta/producción se define al crear la empresa)
     URL = "https://facturacion.apisperu.com/api/v1/invoice/send"
 
@@ -198,6 +205,29 @@ class FacturacionService:
                 "Content-Type": "application/json"
             }
 
+            # MODO PRUEBA: no se envia nada a APISPeru, se simula un OK con
+            # el mismo payload ya calculado arriba, para poder probar el
+            # resto del flujo (venta, cortes, notificacion, caja) sin gastar
+            # comprobantes reales.
+            if FacturacionService.MODO_PRUEBA:
+                print("\n" + "="*50)
+                print("[MODO_PRUEBA] Emision simulada, NO se llama a APISPeru")
+                print(f"Tipo: {tipo_doc} - Serie: {serie} - Correlativo: {correlativo}")
+                print("="*50)
+                return {
+                    "success": True,
+                    "simulado": True,
+                    "tipo": "Boleta" if tipo_doc == "03" else "Factura",
+                    "serie": serie,
+                    "correlativo": correlativo,
+                    "xml": None,
+                    "hash": None,
+                    "cdr": None,
+                    "sunat_response": None,
+                    "payload": payload,
+                    "data": None
+                }
+
             # ENVIAR REQUEST
             print("\n" + "="*50)
             print("ENVIANDO A APISPERU")
@@ -219,7 +249,7 @@ class FacturacionService:
             # VALIDAR RESPUESTA
             if response.status_code in (200, 201):
                 resp_data = response.json()
-                
+
                 return {
                     "success": True,
                     "tipo": "Boleta" if tipo_doc == "03" else "Factura",
@@ -256,12 +286,31 @@ class FacturacionService:
         # Para producción usar librería como num2words
         return f"{int(numero)}"
 
+    # PDF minimo valido usado como placeholder en MODO_PRUEBA -- solo para
+    # que el resto del flujo (subir a storage, guardar registro_pago, etc.)
+    # tenga bytes reales que procesar sin llamar a APISPeru.
+    _PDF_PLACEHOLDER = (
+        b"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
+        b"trailer<</Root 1 0 R>>\n%%EOF"
+    )
+
     @staticmethod
     def generar_pdf(payload):
         """
         Genera PDF a partir del payload de factura/boleta
         """
         try:
+            if FacturacionService.MODO_PRUEBA:
+                import base64
+                print("[MODO_PRUEBA] PDF simulado, NO se llama a APISPeru")
+                return {
+                    "success": True,
+                    "simulado": True,
+                    "pdf": base64.b64encode(FacturacionService._PDF_PLACEHOLDER).decode("utf-8"),
+                }
+
             if not FacturacionService.TOKEN:
                 return {
                     "success": False,

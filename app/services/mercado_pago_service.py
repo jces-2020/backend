@@ -90,6 +90,13 @@ def _sanitize_for_log(value, _depth=0):
 
 class MercadoPagoService:
 
+    # MODO PRUEBA: no llama a la API real de Mercado Pago (evita cobrar de
+    # verdad) mientras se prueba el flujo completo. El resto de la logica
+    # (confirmar_compra, venta, cortes, notificacion) sigue corriendo igual
+    # sobre un pago simulado "approved". Para volver a cobrar de verdad,
+    # poner esto en False.
+    MODO_PRUEBA = True
+
     def __init__(self):
         access_token = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
         if not access_token:
@@ -153,6 +160,20 @@ class MercadoPagoService:
         arma el SDK (misma x-idempotency-key) para que sea el mismo intento
         de pago, no uno adicional.
         """
+        if MercadoPagoService.MODO_PRUEBA:
+            print("[MP_SERVICE] [MODO_PRUEBA] Pago simulado, NO se llama a Mercado Pago", flush=True)
+            fake_id = f"SIMULADO-{uuid.uuid4().hex[:12]}"
+            return {
+                "status": 201,
+                "response": {
+                    "id": fake_id,
+                    "status": "approved",
+                    "status_detail": "accredited",
+                    "transaction_amount": payment_data.get("transaction_amount"),
+                },
+                "request_id": fake_id,
+            }
+
         request_options.access_token = self.access_token
         headers = request_options.get_headers()
         headers["Content-Type"] = "application/json"
