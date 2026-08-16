@@ -71,6 +71,39 @@ def _resolver_producto_uuid(valor: str) -> Optional[str]:
     return None
 
 
+def _descontar_stock_venta(productos_agrupados: Dict[str, float], cortes_payload: List[dict]) -> None:
+    """
+    Descuenta productos.cantidad por cada producto vendido (planchas + cortes).
+    Espeja exactamente lo que el frontend hace de forma optimista en
+    aplicarDescuentoStockLocal (CotizacionProductos.jsx): suma por producto_id
+    entre productos y cortes, y resta del stock real.
+    """
+    deltas: Dict[str, float] = {}
+    for pid, cantidad in (productos_agrupados or {}).items():
+        if not pid:
+            continue
+        deltas[pid] = deltas.get(pid, 0.0) + float(cantidad or 0)
+
+    for corte in (cortes_payload or []):
+        pid = corte.get("producto_id")
+        if not pid:
+            continue
+        deltas[pid] = deltas.get(pid, 0.0) + float(corte.get("cantidad") or 0)
+
+    for pid, cantidad_vendida in deltas.items():
+        if cantidad_vendida <= 0:
+            continue
+        try:
+            prod = supabase.table("productos").select("cantidad").eq("id_producto", pid).limit(1).execute()
+            if not prod.data:
+                continue
+            actual = float(prod.data[0].get("cantidad") or 0)
+            nueva = max(0, actual - cantidad_vendida)
+            supabase.table("productos").update({"cantidad": nueva}).eq("id_producto", pid).execute()
+        except Exception as e:
+            print(f"[COMPRA_SERVICE] [!] Error descontando stock de {pid}: {str(e)}")
+
+
 def _limpiar_nombre_cliente(nombre: str, documento: str) -> str:
     """Remueve prefijos tipo '12345678 - Nombre' y deja solo nombre/razon social."""
     base = str(nombre or "").strip()
@@ -319,6 +352,8 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
                 pass
             return {"ok": False, "error": "No se pudo procesar ningun producto/corte valido"}
 
+        _descontar_stock_venta(productos_agrupados, cortes_payload)
+
         notif_payload = {
             "tipo": "entrega",
             "nombre": cliente["nombre"],
@@ -484,6 +519,8 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             except Exception:
                 pass
             return {"ok": False, "error": "No se pudo procesar ningun producto/corte valido"}
+
+        _descontar_stock_venta(productos_agrupados, cortes_payload)
 
         notif_payload = {
             "tipo": "entrega",
