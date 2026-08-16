@@ -1180,39 +1180,39 @@ def confirmar_compra():
 
 
 
-        # 7. Crear notificacion de entrega
-        try:
-            # Obtener nombre del cliente
-            cli = supabase.table("cliente").select("nombre").eq("id_cliente", cliente_id).limit(1).execute()
-            nombre_cliente = None
-            if cli and cli.data:
-                nombre_cliente = cli.data[0].get("nombre")
+        # 7. Crear notificacion de entrega -- solo si hubo al menos una venta
+        # real. Los webhooks de MercadoPago pueden reintentar el mismo pago;
+        # si ya no queda nada por procesar, crear la notificacion igual deja
+        # una tarjeta fantasma sin pedidos en el panel de Obras.
+        if not ventas_creadas:
+            print(f"[CONFIRMAR_COMPRA] Sin ventas creadas, se omite notificacion (carrito {carrito_id})")
+        else:
+            try:
+                # Obtener nombre del cliente
+                cli = supabase.table("cliente").select("nombre").eq("id_cliente", cliente_id).limit(1).execute()
+                nombre_cliente = None
+                if cli and cli.data:
+                    nombre_cliente = cli.data[0].get("nombre")
 
+                total_items = 0
+                total_items += sum(pp.get("cantidad", 0) for pp in productos_plancha)
+                total_items += sum(c.get("cantidad", 0) for c in cortes_personalizados)
 
-
-
-            total_items = 0
-            total_items += sum(pp.get("cantidad", 0) for pp in productos_plancha)
-            total_items += sum(c.get("cantidad", 0) for c in cortes_personalizados)
-
-
-
-
-            descripcion = f"Pago {payment_id} - items: {total_items}"
-            primera_venta_id = (ventas_creadas[0].get("id_venta") if ventas_creadas else None)
-            notif_payload = {
-                "nombre": nombre_cliente or "Cliente",
-                "descripcion": f"{descripcion} (Carrito: {carrito_id})",
-                "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID,
-                "tipo": "entrega",
-                "venta_id": primera_venta_id,
-            }
-            notif_res = supabase.table("notificacion").insert(notif_payload).execute()
-            if not (notif_res.data or []):
-                print("[CONFIRMAR_COMPRA] WARN Notificacion no creada")
-        except Exception as e:
-            # Log pero no fallar
-            print(f"[CONFIRMAR_COMPRA] Error creando notificacion: {str(e)}")
+                descripcion = f"Pago {payment_id} - items: {total_items}"
+                primera_venta_id = ventas_creadas[0].get("id_venta")
+                notif_payload = {
+                    "nombre": nombre_cliente or "Cliente",
+                    "descripcion": f"{descripcion} (Carrito: {carrito_id})",
+                    "estado_notificacion_id": DEFAULT_ESTADO_NOTIFICACION_ID,
+                    "tipo": "entrega",
+                    "venta_id": primera_venta_id,
+                }
+                notif_res = supabase.table("notificacion").insert(notif_payload).execute()
+                if not (notif_res.data or []):
+                    print("[CONFIRMAR_COMPRA] WARN Notificacion no creada")
+            except Exception as e:
+                # Log pero no fallar
+                print(f"[CONFIRMAR_COMPRA] Error creando notificacion: {str(e)}")
 
 
 

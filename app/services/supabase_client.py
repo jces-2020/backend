@@ -1,7 +1,9 @@
 # Configuración de Supabase para el backend Python (MVC)
 # Este archivo inicializa la conexión y la instancia global de Supabase
 
+import httpx
 from supabase import create_client, Client
+from supabase.lib.client_options import SyncClientOptions
 
 # Configuración de Supabase
 SUPABASE_URL = "https://zoafuvjfzawhvdrwnydo.supabase.co"
@@ -21,7 +23,22 @@ IS_SERVICE = bool(key and key != "tu_service_role_key_aqui")
 if not url or not key:
     raise ValueError("Las credenciales de Supabase no están configuradas.")
 
-supabase: Client = create_client(url, key)
+# postgrest-py abre su http_client interno con http2=True cuando no se le
+# pasa uno propio. Con el proceso corriendo largo tiempo, esas conexiones
+# HTTP/2 quedan pooled y el servidor (o un proxy intermedio) las cierra por
+# inactividad; httpx no reintenta en una conexión nueva y explota con
+# httpx.RemoteProtocolError: ConnectionTerminated en cualquier request que
+# reuse esa conexión muerta. http2=False + retries evita quedar pegado en
+# esa conexión zombie.
+_http_client = httpx.Client(
+    http2=False,
+    transport=httpx.HTTPTransport(retries=2),
+    timeout=httpx.Timeout(120),
+)
+
+supabase: Client = create_client(
+    url, key, options=SyncClientOptions(httpx_client=_http_client)
+)
 
 # Note: For production do NOT commit service role keys. Set SUPABASE_SERVICE_ROLE_KEY in your environment.
 __all__ = ['supabase']

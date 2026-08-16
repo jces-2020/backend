@@ -252,6 +252,19 @@ def listar_notificaciones_admin():
         for n, meta, carrito_id in parsed_rows:
             carrito_key = str(carrito_id or '').strip()
 
+            # Basura de un trigger de Postgres en 'venta' ("Nueva venta registrada" /
+            # "Se vendio un producto") ajeno a esta app: nunca trae tipo ni
+            # estado_notificacion_id porque el trigger no conoce esos valores.
+            # Cualquier notificacion real creada por el backend siempre trae
+            # estado_notificacion_id, asi que esta firma es segura para
+            # distinguir basura y autolimpiarla.
+            if not n.get('estado_notificacion_id') and not (n.get('tipo') or '').strip():
+                try:
+                    supabase.table('notificacion').delete().eq('id_notificacion', n.get('id_notificacion')).execute()
+                except Exception:
+                    pass
+                continue
+
             # Notificación huérfana: apunta a un carrito que ya no existe (borrado
             # a medias o en un intento anterior). Se limpia sola para que no
             # reaparezca como una tarjeta "fantasma" tras recargar.
@@ -318,6 +331,8 @@ def listar_notificaciones_admin():
         return jsonify({'success': True, 'notificaciones': notifs}), 200
 
     except Exception as e:
+        import traceback
+        print(f"[ERROR] listar_notificaciones_admin: {e}\n{traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

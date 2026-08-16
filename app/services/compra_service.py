@@ -307,7 +307,18 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
             return {"ok": False, "error": str(e)}
 
-        # 5. Crear notificacion vinculada a la venta creada
+        # 5. Crear notificacion vinculada a la venta creada -- solo si de verdad
+        # se guardo algo. Si todos los items fueron filtrados (producto_id
+        # invalido/inexistente, medidas en 0, etc.) no hay nada que entregar:
+        # crear la notificacion igual deja una tarjeta fantasma sin pedidos.
+        if not primera_venta_id:
+            print(f"[COMPRA_SERVICE] [!] Sin ventas validas, no se crea notificacion (carrito {id_carrito})")
+            try:
+                supabase.table("carrito_compras").delete().eq("id_carrito", id_carrito).execute()
+            except Exception:
+                pass
+            return {"ok": False, "error": "No se pudo procesar ningun producto/corte valido"}
+
         notif_payload = {
             "tipo": "entrega",
             "nombre": cliente["nombre"],
@@ -464,7 +475,16 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             print(f"[COMPRA_SERVICE] [!] Error guardando venta: {str(e)}")
             return {"ok": False, "error": str(e)}
 
-        # 5. Crear notificacion vinculada a la venta creada
+        # 5. Crear notificacion vinculada a la venta creada -- solo si de verdad
+        # se guardo algo (ver comentario equivalente en la rama de cliente existente).
+        if not primera_venta_id:
+            print(f"[COMPRA_SERVICE] [!] Sin ventas validas, no se crea notificacion (carrito {id_carrito})")
+            try:
+                supabase.table("carrito_compras").delete().eq("id_carrito", id_carrito).execute()
+            except Exception:
+                pass
+            return {"ok": False, "error": "No se pudo procesar ningun producto/corte valido"}
+
         notif_payload = {
             "tipo": "entrega",
             "nombre": nombre_completo,
