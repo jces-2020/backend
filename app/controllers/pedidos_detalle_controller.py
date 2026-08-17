@@ -517,19 +517,20 @@ def actualizar_estado_notificacion_admin(notif_id):
         print(f"[ESTADO] Actualizando notif={notif_id} estado_id={eid} lock_id={meta.get('en_proceso_por_id','')}")
 
         # ── Update atómico: estado + descripcion en UNA SOLA llamada ──────────
-        # Intentamos dict primero (JSONB), luego json.dumps (TEXT), luego solo estado
+        # 'descripcion' es varchar(255) (texto), no JSONB: siempre serializar
+        # con json.dumps. Pasar un dict crudo aqui puede "funcionar" sin tirar
+        # excepcion pero corrompe el contenido guardado (deja de ser JSON
+        # parseable en la proxima lectura).
         _actualizado = False
-        for _desc_val in [meta, json.dumps(meta, ensure_ascii=False)]:
-            try:
-                supabase.table("notificacion").update({
-                    "estado_notificacion_id": eid,
-                    "descripcion": _desc_val,
-                }).eq("id_notificacion", notif_id).execute()
-                _actualizado = True
-                print(f"[ESTADO] Update OK (desc={'dict' if isinstance(_desc_val,dict) else 'str'}) lock_id={meta.get('en_proceso_por_id','')}")
-                break
-            except Exception as _e:
-                print(f"[ESTADO] Update fallo con desc={'dict' if isinstance(_desc_val,dict) else 'str'}: {_e}")
+        try:
+            supabase.table("notificacion").update({
+                "estado_notificacion_id": eid,
+                "descripcion": json.dumps(meta, ensure_ascii=False),
+            }).eq("id_notificacion", notif_id).execute()
+            _actualizado = True
+            print(f"[ESTADO] Update OK lock_id={meta.get('en_proceso_por_id','')}")
+        except Exception as _e:
+            print(f"[ESTADO] Update fallo: {_e}")
         if not _actualizado:
             # Último recurso: al menos actualizar el estado
             supabase.table("notificacion").update({

@@ -22,7 +22,26 @@ def obtener_servicios_de_notificacion(notificacion_id: str):
 
         notif        = notif_result.data[0]
         descripcion  = notif.get('descripcion') or ''
-        cliente_id   = notif.get('id_cliente')
+
+        # 'notificacion' no tiene id_cliente/documento propios: el cliente real
+        # se resuelve via notificacion.venta_id -> venta.cliente_id -> cliente.
+        cliente_id = None
+        cliente_obj = None
+        venta_id = notif.get('venta_id')
+        if venta_id:
+            try:
+                vres = supabase.table('venta').select('cliente_id').eq('id_venta', venta_id).limit(1).execute()
+                if vres.data:
+                    cliente_id = vres.data[0].get('cliente_id')
+            except Exception:
+                cliente_id = None
+        if cliente_id:
+            try:
+                cres = supabase.table('cliente').select('id_cliente, nombre, documento, correo').eq('id_cliente', cliente_id).limit(1).execute()
+                if cres.data:
+                    cliente_obj = cres.data[0]
+            except Exception:
+                cliente_obj = None
 
         # --- Intentar parsear como JSON nuevo ---
         try:
@@ -75,6 +94,7 @@ def obtener_servicios_de_notificacion(notificacion_id: str):
                 "data":     items,
                 "meta":     meta_out,
                 "cliente_id": cliente_id,
+                "cliente":  cliente_obj,
             }), 200
 
         return jsonify({
@@ -85,6 +105,7 @@ def obtener_servicios_de_notificacion(notificacion_id: str):
                 "message": "La notificación no contiene presupuesto_ids válidos"
             },
             "cliente_id": cliente_id,
+            "cliente":    cliente_obj,
         }), 200
 
     except Exception as e:

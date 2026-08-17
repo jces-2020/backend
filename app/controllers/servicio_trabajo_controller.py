@@ -156,51 +156,44 @@ def guardar_remetro():
                 except Exception as pres_err:
                     print(f"[SERVICIO] ⚠️ Excepción actualizando presupuesto {id_presupuesto}: {pres_err}")
 
+        # supabase-py/postgrest-py NO devuelve un objeto con `.error`: ante
+        # cualquier error de la API lanza `postgrest.exceptions.APIError`.
+        # Por eso el intento con columnas remetro_* (que no existen en
+        # 'notificacion') y su fallback a 'descripcion' van en su propio
+        # try/except cada uno, en vez de inspeccionar `.error` (que nunca se
+        # llega a evaluar porque `.execute()` ya lanzó la excepción antes).
         remetro_guardado = False
         if notificacion_id:
             print(f"[SERVICIO] Guardando REMETRO para notificación {notificacion_id}: {remetro_data}")
             try:
-                resultado = supabase.table("notificacion") \
+                supabase.table("notificacion") \
                     .update(remetro_data) \
                     .eq("id_notificacion", notificacion_id) \
                     .execute()
-
-                err = getattr(resultado, 'error', None) if resultado is not None else None
-                if err:
-                    # Si las columnas remetro_* no existen aún, no bloquear el flujo de venta.
-                    codigo = err.get("code") if isinstance(err, dict) else None
-                    if codigo == "PGRST204":
-                        print(f"[SERVICIO] ⚠️ Columnas REMETRO no existen en notificacion. Guardando fallback en descripcion: {err}")
-
-                        notif_actual = supabase.table("notificacion") \
-                            .select("descripcion") \
-                            .eq("id_notificacion", notificacion_id) \
-                            .limit(1) \
-                            .execute()
-                        actual_data = (getattr(notif_actual, "data", None) or [{}])[0]
-                        descripcion_actual = (actual_data or {}).get("descripcion")
-                        descripcion_merge = _merge_remetro_en_descripcion(descripcion_actual, remetro_data)
-
-                        fallback_resultado = supabase.table("notificacion") \
-                            .update({"descripcion": descripcion_merge}) \
-                            .eq("id_notificacion", notificacion_id) \
-                            .execute()
-
-                        fallback_err = getattr(fallback_resultado, 'error', None) if fallback_resultado is not None else None
-                        if fallback_err:
-                            print(f"[SERVICIO] ⚠️ Error guardando fallback REMETRO en descripcion: {fallback_err}")
-                        else:
-                            remetro_guardado = True
-                    else:
-                        print(f"[SERVICIO] ⚠️ Error actualizando REMETRO (no bloqueante): {err}")
-                else:
-                    remetro_guardado = True
+                remetro_guardado = True
             except Exception as rem_err:
-                print(f"[SERVICIO] ⚠️ Excepción guardando REMETRO (no bloqueante): {rem_err}")
+                print(f"[SERVICIO] ⚠️ Columnas remetro_* no disponibles ({rem_err}); usando fallback en descripcion")
+                try:
+                    notif_actual = supabase.table("notificacion") \
+                        .select("descripcion") \
+                        .eq("id_notificacion", notificacion_id) \
+                        .limit(1) \
+                        .execute()
+                    actual_data = (getattr(notif_actual, "data", None) or [{}])[0]
+                    descripcion_actual = (actual_data or {}).get("descripcion")
+                    descripcion_merge = _merge_remetro_en_descripcion(descripcion_actual, remetro_data)
+
+                    supabase.table("notificacion") \
+                        .update({"descripcion": descripcion_merge}) \
+                        .eq("id_notificacion", notificacion_id) \
+                        .execute()
+                    remetro_guardado = True
+                except Exception as fallback_err:
+                    print(f"[SERVICIO] ⚠️ Error guardando fallback REMETRO en descripcion: {fallback_err}")
         else:
             print("[SERVICIO] ⚠️ notificacion_id no enviado; se omite actualización de REMETRO")
-        
-        print(f"[SERVICIO] ✅ REMETRO guardado exitosamente")
+
+        print(f"[SERVICIO] {'✅' if remetro_guardado else '⚠️'} REMETRO guardado={remetro_guardado}")
         return jsonify({
             "success": True,
             "message": "Datos procesados correctamente",
