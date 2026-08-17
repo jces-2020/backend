@@ -3,12 +3,19 @@ from services.pago_balance_service import sumar_monto_empresa
 from datetime import date
 from typing import Optional
 
-def registrar_venta(total: float, metodo: str, caja_id: Optional[str] = None) -> bool:
+def registrar_venta(
+    total: float,
+    metodo: str,
+    caja_id: Optional[str] = None,
+    cliente_id: Optional[str] = None,
+    tipo_venta_id: Optional[str] = None,
+    carrito_id: Optional[str] = None,
+) -> bool:
     """
     Registra una venta en la tabla venta y actualiza el subtotal en la tabla caja.
     """
     fecha_actual = date.today().isoformat()
-    
+
     # 1. Insertar venta ('venta' no tiene columna caja_id -- esa vive en
     # 'registro_pago'; el subtotal de caja se actualiza aparte en el paso 2)
     venta_payload = {
@@ -16,6 +23,15 @@ def registrar_venta(total: float, metodo: str, caja_id: Optional[str] = None) ->
         "fecha_venta": fecha_actual,
         "metodo": metodo,
     }
+    # cliente_id/tipo_venta_id/carrito_id son opcionales: sin ellos, esta venta
+    # queda invisible para _carrito_ids_servicio_de_cliente (barra de progreso
+    # del cliente), que filtra ventas de servicio justamente por esos 3 campos.
+    if cliente_id:
+        venta_payload["cliente_id"] = cliente_id
+    if tipo_venta_id:
+        venta_payload["tipo_venta_id"] = tipo_venta_id
+    if carrito_id:
+        venta_payload["carrito_id"] = carrito_id
     res = supabase.table("venta").insert(venta_payload).execute()
     venta_ok = bool(res.data)
     

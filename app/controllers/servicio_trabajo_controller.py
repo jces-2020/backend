@@ -10,6 +10,27 @@ import json
 
 servicio_trabajo_bp = Blueprint("servicio_trabajo_bp", __name__)
 
+DEFAULT_TIPO_VENTA_ID_SERVICIO = "8bd1ccec-bca7-46f9-bbcf-810cf8d1a929"  # tipo_venta.descripcion = 'servicio'
+
+
+def _resolver_cliente_id_de_notificacion(notificacion_id: Optional[str]) -> Optional[str]:
+    """
+    'notificacion' no tiene cliente_id propio: se resuelve via
+    notificacion.venta_id -> venta.cliente_id (la venta que crea
+    guardar_multiples_presupuestos si ya existia el cliente).
+    """
+    if not notificacion_id:
+        return None
+    try:
+        nres = supabase.table("notificacion").select("venta_id").eq("id_notificacion", notificacion_id).limit(1).execute()
+        venta_id = (nres.data or [{}])[0].get("venta_id") if nres.data else None
+        if not venta_id:
+            return None
+        vres = supabase.table("venta").select("cliente_id").eq("id_venta", venta_id).limit(1).execute()
+        return (vres.data or [{}])[0].get("cliente_id") if vres.data else None
+    except Exception:
+        return None
+
 
 def _merge_remetro_en_descripcion(descripcion_actual: Any, remetro_data: Dict[str, Any]) -> str:
     """Mezcla los datos de remetro dentro de descripcion como JSON estable."""
@@ -70,7 +91,16 @@ def guardar_remetro():
         venta_registrada = False
         metodos_permitidos = {"por tarjeta", "al contado", "por yape"}
         if precio > 0 and metodo_pago in metodos_permitidos:
-            venta_ok = registrar_venta(total=precio, metodo=metodo_pago, caja_id=None)
+            carrito_id = data.get("carrito_id") or None
+            cliente_id_resuelto = _resolver_cliente_id_de_notificacion(notificacion_id)
+            venta_ok = registrar_venta(
+                total=precio,
+                metodo=metodo_pago,
+                caja_id=None,
+                cliente_id=cliente_id_resuelto,
+                tipo_venta_id=DEFAULT_TIPO_VENTA_ID_SERVICIO,
+                carrito_id=carrito_id,
+            )
             if not venta_ok:
                 print("[SERVICIO] ⚠️ No se pudo registrar la venta del servicio")
                 return jsonify({"success": False, "message": "No se pudo registrar la venta del servicio"}), 500
