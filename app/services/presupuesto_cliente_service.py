@@ -12,9 +12,9 @@ import os
 import time
 from services.supabase_client import supabase
 
-DEFAULT_CARRITO_ID = "bf95672d-cf61-460c-b826-1ee86e513141"
 DEFAULT_TIPO_VENTA_ID_SERVICIO = "8bd1ccec-bca7-46f9-bbcf-810cf8d1a929"
 DEFAULT_ESTADO_NOTIFICACION_ID = "62369650-3a4f-4f99-9968-d4d27ae6de16"  # PENDIENTE
+DEFAULT_TIPO_NOTIFICACION_SERVICIO_ID = "d6ca867a-28e2-4457-9981-889bbe1259d9"  # venta_servicio
 
 
 def _build_jwt_temporal(cliente: Dict) -> str:
@@ -159,9 +159,9 @@ def guardar_multiples_presupuestos(
                     total_general += total
 
                     # 3.1 Crear una venta ficticia de servicio asociada al cliente encontrado
+                    # (sin carrito_id: es nullable y no hay carrito_compras real para un presupuesto)
                     venta_payload = {
                         'cliente_id': cliente_id,
-                        'carrito_id': DEFAULT_CARRITO_ID,
                         'cantidad': 1,
                         'monto': round(total, 2),
                         'metodo': 'presupuesto',
@@ -186,6 +186,7 @@ def guardar_multiples_presupuestos(
             'nombre':      nombre_cliente,
             'descripcion': json.dumps(meta),
             'tipo':        'servicio',
+            'tipo_notificacion_id': DEFAULT_TIPO_NOTIFICACION_SERVICIO_ID,
             'estado_notificacion_id': DEFAULT_ESTADO_NOTIFICACION_ID,
             'venta_id':    ventas_creadas[0].get('id_venta') if ventas_creadas else None,
         }
