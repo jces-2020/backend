@@ -50,7 +50,7 @@ def add_gasto():
 
     # Descontar el gasto del saldo acumulado de empresa en tabla pago.
     try:
-        saldo_actualizado = restar_monto_empresa(monto_float)
+        saldo_actualizado = restar_monto_empresa(monto_float, origen="gasto", referencia_id=gasto.get("id_gasto"))
     except Exception as exc:
         # Revertir gasto si falla actualización de saldo para evitar inconsistencia.
         try:
@@ -159,7 +159,7 @@ def registrar_retiro():
 
     # 3. Actualizar saldo acumulado en tabla pago (resta por retiro)
     try:
-        restar_monto_empresa(float(monto))
+        restar_monto_empresa(float(monto), origen="retiro", referencia_id=gasto.get("id_gasto"))
     except Exception as exc:
         print(f"[registrar_retiro] Error actualizando tabla pago (saldo empresa): {exc}")
 

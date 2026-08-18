@@ -184,9 +184,8 @@ def create_pago(personal_id: str, monto: float, fecha: str) -> Optional[Dict[str
     Mantiene la tabla pago como saldo unico actualizado.
     """
     try:
-        _ = personal_id  # Conservado por compatibilidad de firma.
         _ = fecha
-        return restar_monto_empresa(float(monto))
+        return restar_monto_empresa(float(monto), origen="pago_personal", referencia_id=personal_id)
     except Exception as exc:  # noqa: BLE001
         print(f"[personal_service] error creating pago: {exc}")
         return None

@@ -47,8 +47,9 @@ def registrar_venta(
     # registro_pago. Sumar aca duplicaria el monto (ver registro_pago_comprobante_service.py).
 
     # 2. Actualizar saldo acumulado en tabla pago (monto empresa en tiempo real)
+    id_venta = (res.data or [{}])[0].get("id_venta")
     try:
-        sumar_monto_empresa(float(total))
+        sumar_monto_empresa(float(total), origen="venta_servicio", referencia_id=id_venta)
     except Exception as exc:
         print(f"[venta_service] Error actualizando tabla pago (saldo empresa): {exc}")
 
