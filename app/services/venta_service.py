@@ -10,6 +10,7 @@ def registrar_venta(
     cliente_id: Optional[str] = None,
     tipo_venta_id: Optional[str] = None,
     carrito_id: Optional[str] = None,
+    presupuesto_id: Optional[str] = None,
 ) -> bool:
     """
     Registra una venta en la tabla venta y actualiza el subtotal en la tabla caja.
@@ -32,6 +33,8 @@ def registrar_venta(
         venta_payload["tipo_venta_id"] = tipo_venta_id
     if carrito_id:
         venta_payload["carrito_id"] = carrito_id
+    if presupuesto_id:
+        venta_payload["presupuesto_id"] = presupuesto_id
     res = supabase.table("venta").insert(venta_payload).execute()
     venta_ok = bool(res.data)
     
