@@ -13,6 +13,33 @@ servicio_trabajo_bp = Blueprint("servicio_trabajo_bp", __name__)
 DEFAULT_TIPO_VENTA_ID_SERVICIO = "8bd1ccec-bca7-46f9-bbcf-810cf8d1a929"  # tipo_venta.descripcion = 'servicio'
 
 
+def _resolver_presupuesto_id_de_notificacion(notificacion_id: Optional[str]) -> Optional[str]:
+    """
+    La venta de tipo servicio requiere presupuesto_id (constraint en BD).
+    Se toma el primer presupuesto_ids guardado en notificacion.descripcion
+    al crear el presupuesto (ver presupuesto_cliente_service.py).
+    """
+    if not notificacion_id:
+        return None
+    try:
+        nres = supabase.table("notificacion").select("descripcion").eq("id_notificacion", notificacion_id).limit(1).execute()
+        descripcion = (nres.data or [{}])[0].get("descripcion") if nres.data else None
+        meta = {}
+        if isinstance(descripcion, dict):
+            meta = descripcion
+        elif isinstance(descripcion, str) and descripcion.strip():
+            try:
+                loaded = json.loads(descripcion.strip())
+                if isinstance(loaded, dict):
+                    meta = loaded
+            except Exception:
+                meta = {}
+        presupuesto_ids = meta.get("presupuesto_ids") or []
+        return presupuesto_ids[0] if presupuesto_ids else None
+    except Exception:
+        return None
+
+
 def _resolver_cliente_id_de_notificacion(notificacion_id: Optional[str]) -> Optional[str]:
     """
     'notificacion' no tiene cliente_id propio: se resuelve via
@@ -93,6 +120,17 @@ def guardar_remetro():
         if precio > 0 and metodo_pago in metodos_permitidos:
             carrito_id = data.get("carrito_id") or None
             cliente_id_resuelto = _resolver_cliente_id_de_notificacion(notificacion_id)
+
+            # BD exige presupuesto_id (y NO producto_id) para venta de tipo servicio.
+            presupuesto_id_venta = None
+            servicios_actualizados_raw = data.get("servicios_actualizados") or []
+            if isinstance(servicios_actualizados_raw, list) and servicios_actualizados_raw:
+                primero = servicios_actualizados_raw[0]
+                if isinstance(primero, dict):
+                    presupuesto_id_venta = primero.get("id_presupuesto")
+            if not presupuesto_id_venta:
+                presupuesto_id_venta = _resolver_presupuesto_id_de_notificacion(notificacion_id)
+
             venta_ok = registrar_venta(
                 total=precio,
                 metodo=metodo_pago,
@@ -100,6 +138,7 @@ def guardar_remetro():
                 cliente_id=cliente_id_resuelto,
                 tipo_venta_id=DEFAULT_TIPO_VENTA_ID_SERVICIO,
                 carrito_id=carrito_id,
+                presupuesto_id=presupuesto_id_venta,
             )
             if not venta_ok:
                 print("[SERVICIO] ⚠️ No se pudo registrar la venta del servicio")
