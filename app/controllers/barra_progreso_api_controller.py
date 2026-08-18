@@ -77,6 +77,22 @@ def _resolver_cliente_id(cliente_id: Optional[str], cliente_nombre: Optional[str
     return None
 
 
+def _resolver_cliente_id_via_notificacion(notificacion_id: Optional[str]) -> Optional[str]:
+    """Fallback: 'notificacion' de servicio no trae cliente_id propio, se resuelve
+    via notificacion.venta_id -> venta.cliente_id (misma logica que guardar_remetro)."""
+    if not notificacion_id:
+        return None
+    try:
+        nres = supabase.table('notificacion').select('venta_id').eq('id_notificacion', notificacion_id).limit(1).execute()
+        venta_id = (nres.data or [{}])[0].get('venta_id') if nres.data else None
+        if not venta_id:
+            return None
+        vres = supabase.table('venta').select('cliente_id').eq('id_venta', venta_id).limit(1).execute()
+        return (vres.data or [{}])[0].get('cliente_id') if vres.data else None
+    except Exception:
+        return None
+
+
 def _vincular_notificacion_servicio(notificacion_id: Optional[str], carrito_id: Optional[str]):
     """Guarda metadatos mínimos para enlazar la notificación de servicio con su carrito."""
     if not notificacion_id or not carrito_id:
@@ -172,6 +188,8 @@ def iniciar_progreso_servicio():
         notificacion_id = data.get('notificacion_id')
 
         cliente_id_resuelto = _resolver_cliente_id(cliente_id, cliente_nombre, cliente_correo)
+        if not cliente_id_resuelto:
+            cliente_id_resuelto = _resolver_cliente_id_via_notificacion(notificacion_id)
         if not cliente_id_resuelto:
             return jsonify({
                 'success': True,
