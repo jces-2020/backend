@@ -82,13 +82,13 @@ def get_caja_by_date(fecha: str) -> List[Dict[str, Any]]:
 
 def get_ventas_by_date(fecha: str) -> List[Dict[str, Any]]:
     """
-    Obtiene todas las ventas (sin filtrar por fecha) para mostrarlas en la tabla de ventas.
+    Obtiene las ventas de una fecha especifica para mostrarlas en la tabla de ventas.
     """
     try:
         result = supabase.table("venta").select(
             "id_venta, monto, fecha_venta, metodo"
-        ).order("fecha_venta", desc=True).execute()
-        print(f"[gastos_service] fetched {len(result.data or [])} ventas (todas)")
+        ).eq("fecha_venta", fecha).order("fecha_venta", desc=True).execute()
+        print(f"[gastos_service] fetched {len(result.data or [])} ventas para {fecha}")
         return result.data or []
     except Exception as exc:  # noqa: BLE001
         print(f"[gastos_service] error fetching ventas: {exc}")

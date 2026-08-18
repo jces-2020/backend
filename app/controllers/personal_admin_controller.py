@@ -90,6 +90,9 @@ def upload_cv():
     except Exception as exc:  # noqa: BLE001
         print(f"[personal_admin_controller] error uploading CV: {exc}")
         return jsonify({"success": False, "message": "Error al procesar el archivo"}), 500
+
+
+@personal_admin_bp.route("/api/personal/<personal_id>", methods=["GET"])
 def get_personal_detail(personal_id):
     """Obtiene detalles de un personal espec\u00edfico."""
     personal = get_personal_by_id(personal_id)

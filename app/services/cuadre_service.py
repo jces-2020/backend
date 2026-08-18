@@ -26,7 +26,7 @@ def _month_range(mes: str) -> Tuple[str, str]:
 def get_pagos_by_month(mes: str) -> List[Dict[str, Any]]:
     ini, fin = _month_range(mes)
     try:
-        result = supabase.table("pago").select("id_pago, monto, fecha").gte("fecha", ini).lte("fecha", fin).execute()
+        result = supabase.table("monto_empresa").select("id_movimiento, monto, fecha, origen").gte("fecha", ini).lte("fecha", fin).execute()
         return result.data or []
     except Exception as exc:
         print(f"[cuadre_service] error pagos: {exc}")
@@ -77,19 +77,13 @@ def get_resumen_mes(mes: str) -> Dict[str, Any]:
     egreso = total_gastos
     total_empresa = ingreso - egreso
 
-    # Monto real de empresa: saldo actual en tabla pago (registro unico/ultimo)
+    # Monto real de empresa: 'monto_empresa' es un ledger de movimientos
+    # (positivos/negativos), no una fila unica -- el saldo es la suma de todos.
     monto_empresa_real = 0.0
     try:
-        pago_actual = (
-            supabase.table("pago")
-            .select("monto, fecha")
-            .order("fecha", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = pago_actual.data or []
-        if rows:
-            monto_empresa_real = float(rows[0].get("monto") or 0)
+        movimientos = supabase.table("monto_empresa").select("monto").execute()
+        rows = movimientos.data or []
+        monto_empresa_real = sum(float(r.get("monto") or 0) for r in rows)
     except Exception as exc:
         print(f"[cuadre_service] error monto real empresa: {exc}")
 
