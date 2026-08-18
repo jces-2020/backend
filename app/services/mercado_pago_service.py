@@ -90,12 +90,8 @@ def _sanitize_for_log(value, _depth=0):
 
 class MercadoPagoService:
 
-    # MODO PRUEBA: no llama a la API real de Mercado Pago (evita cobrar de
-    # verdad) mientras se prueba el flujo completo. El resto de la logica
-    # (confirmar_compra, venta, cortes, notificacion) sigue corriendo igual
-    # sobre un pago simulado "approved". Para volver a cobrar de verdad,
-    # poner esto en False.
-    MODO_PRUEBA = True
+    # MODO PRODUCCION: llama a la API real de Mercado Pago y cobra de verdad.
+    MODO_PRUEBA = False
 
     def __init__(self):
         access_token = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")

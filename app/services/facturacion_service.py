@@ -9,12 +9,8 @@ class FacturacionService:
     Servicio de Facturación Electrónica APISPeru
     """
 
-    # MODO PRUEBA: no llama a APISPeru (evita gastar comprobantes reales)
-    # mientras se prueba el flujo completo. El resto de la logica (payload,
-    # guardado en BD, PDF, etc.) sigue corriendo igual, solo se simula la
-    # respuesta del proveedor. Para volver a emitir comprobantes reales,
-    # poner esto en False.
-    MODO_PRUEBA = True
+    # MODO PRODUCCION: llama a APISPeru y emite comprobantes reales (SUNAT).
+    MODO_PRUEBA = False
 
     # URL CORRECTA (el ambiente beta/producción se define al crear la empresa)
     URL = "https://facturacion.apisperu.com/api/v1/invoice/send"
