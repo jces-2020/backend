@@ -338,11 +338,7 @@ def get_cortes_por_notificacion(notificacion_id):
         from app.services.supabase_client import supabase
         import json
         import re
-
-        # Permite forzar la consulta de ubicación aunque el pago no supere
-        # S/ 1000 (botón "Ver ruta de todos modos" en Entrega.jsx).
-        forzar_ubicacion = request.args.get("forzar_ubicacion", "").lower() in ("1", "true", "si")
-
+        
         # 1. Obtener notificación
         notif_result = supabase.table("notificacion") \
             .select("descripcion, venta_id") \
@@ -361,41 +357,14 @@ def get_cortes_por_notificacion(notificacion_id):
 
         # 'notificacion' no tiene id_cliente propio; se resuelve vía venta_id.
         cliente_id = None
-        registro_pago_id = None
         venta_id = notif.get("venta_id")
         if venta_id:
             try:
-                venta_res = supabase.table("venta").select("cliente_id, registro_pago_id").eq("id_venta", venta_id).limit(1).execute()
+                venta_res = supabase.table("venta").select("cliente_id").eq("id_venta", venta_id).limit(1).execute()
                 if venta_res.data:
                     cliente_id = venta_res.data[0].get("cliente_id")
-                    registro_pago_id = venta_res.data[0].get("registro_pago_id")
             except Exception:
                 cliente_id = None
-
-        # Monto pagado (via registro_pago) y, solo si supera S/ 1000, la
-        # ubicación de entrega más reciente del cliente (ruta a seguir).
-        total_pago = None
-        ubicacion = None
-        if registro_pago_id:
-            try:
-                pago_res = supabase.table("registro_pago").select("total").eq("id_registro", registro_pago_id).limit(1).execute()
-                if pago_res.data:
-                    total_pago = pago_res.data[0].get("total")
-            except Exception:
-                total_pago = None
-
-        if cliente_id and (forzar_ubicacion or (total_pago is not None and float(total_pago) > 1000)):
-            try:
-                ubic_res = supabase.table("ubicacion") \
-                    .select("direccion, referencia, latitud, longitud, fecha_creacion") \
-                    .eq("cliente_id", cliente_id) \
-                    .order("fecha_creacion", desc=True) \
-                    .limit(1) \
-                    .execute()
-                if ubic_res.data:
-                    ubicacion = ubic_res.data[0]
-            except Exception:
-                ubicacion = None
 
         # 2. Obtener carrito_id desde JSON o texto libre
         carrito_id = None
@@ -419,20 +388,16 @@ def get_cortes_por_notificacion(notificacion_id):
                 "productos": [],
                 "total_productos": 0,
                 "cliente_id": cliente_id,
-                "carrito_id": None,
-                "total_pago": total_pago,
-                "ubicacion": ubicacion
+                "carrito_id": None
             }), 200
-
+        
         # 3. Obtener cortes del carrito agrupados por producto
         resultado = obtener_cortes_agrupados_por_producto(carrito_id)
-
+        
         if resultado.get("success"):
             # Agregar información de cliente
             resultado["cliente_id"] = cliente_id
             resultado["carrito_id"] = carrito_id
-            resultado["total_pago"] = total_pago
-            resultado["ubicacion"] = ubicacion
             if not resultado.get("productos"):
                 resultado["message"] = "El cliente no agregó cortes"
             return jsonify(resultado), 200
@@ -443,9 +408,7 @@ def get_cortes_por_notificacion(notificacion_id):
             "productos": [],
             "total_productos": 0,
             "cliente_id": cliente_id,
-            "carrito_id": carrito_id,
-            "total_pago": total_pago,
-            "ubicacion": ubicacion
+            "carrito_id": carrito_id
         }), 200
     
     except Exception as e:
