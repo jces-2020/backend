@@ -338,7 +338,11 @@ def get_cortes_por_notificacion(notificacion_id):
         from app.services.supabase_client import supabase
         import json
         import re
-        
+
+        # Permite forzar la consulta de ubicación aunque el pago no supere
+        # S/ 1000 (botón "Ver ruta de todos modos" en Entrega.jsx).
+        forzar_ubicacion = request.args.get("forzar_ubicacion", "").lower() in ("1", "true", "si")
+
         # 1. Obtener notificación
         notif_result = supabase.table("notificacion") \
             .select("descripcion, venta_id") \
@@ -380,7 +384,7 @@ def get_cortes_por_notificacion(notificacion_id):
             except Exception:
                 total_pago = None
 
-        if cliente_id and total_pago is not None and float(total_pago) > 1000:
+        if cliente_id and (forzar_ubicacion or (total_pago is not None and float(total_pago) > 1000)):
             try:
                 ubic_res = supabase.table("ubicacion") \
                     .select("direccion, referencia, latitud, longitud, fecha_creacion") \
