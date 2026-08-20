@@ -1,382 +1,455 @@
 """
-Servicio para obtener cortes personalizados para producción.
-Se usa para mostrar los cortes que debe realizar el personal.
+Controlador para gestión de cortes en producción.
+Endpoints para que el personal vea y actualice cortes de pedidos.
 """
-from app.services.supabase_client import supabase
-from typing import Optional, Dict, Any, List
+from flask import Blueprint, request, jsonify
+from app.services.cortes_produccion_service import (
+    obtener_cortes_por_carrito,
+    obtener_cortes_por_cliente,
+    obtener_cortes_agrupados_por_producto,
+    actualizar_estado_corte,
+    actualizar_estados_cortes_carrito,
+    eliminar_cortes,
+    reducir_cantidad_corte
+)
+
+cortes_produccion_bp = Blueprint("cortes_produccion", __name__)
 
 
-def obtener_cortes_por_carrito(carrito_id: str) -> Dict[str, Any]:
+# ========================================
+# OBTENER CORTES
+# ========================================
+
+@cortes_produccion_bp.route("/api/cortes/carrito/<carrito_id>", methods=["GET"])
+def get_cortes_por_carrito(carrito_id):
     """
-    Obtiene todos los cortes asociados a un carrito específico.
-
-    La tabla 'cortes' ya no tiene carrito_id/producto_id propios: se relaciona
-    con el carrito a través de venta_id (cortes.venta_id -> venta.id_venta,
-    venta.carrito_id / venta.producto_id).
-
-    Args:
-        carrito_id: UUID del carrito
-
-    Returns:
-        dict con {success: bool, cortes: list, error?: str}
+    GET /api/cortes/carrito/<carrito_id>
+    Obtiene todos los cortes de un carrito específico.
     """
     try:
-        ventas_result = supabase.table("venta") \
-            .select("id_venta, producto_id") \
-            .eq("carrito_id", carrito_id) \
-            .execute()
-        ventas = ventas_result.data or []
-        venta_producto_map = {v.get("id_venta"): v.get("producto_id") for v in ventas if v.get("id_venta")}
-        venta_ids = list(venta_producto_map.keys())
-
-        if not venta_ids:
-            return {"success": True, "cortes": [], "total": 0}
-
-        cortes_result = supabase.table("cortes") \
-            .select("id_corte, ancho_cm, alto_cm, cantidad, estado, fecha_registro, normbre, venta_id") \
-            .in_("venta_id", venta_ids) \
-            .execute()
-        cortes = cortes_result.data or []
-
-        producto_ids = list({pid for pid in venta_producto_map.values() if pid})
-        productos_map: Dict[str, Any] = {}
-        if producto_ids:
-            productos_result = supabase.table("productos") \
-                .select("id_producto, nombre, codigo, descripcion, categoria_id, categoria(descripcion), almacen(fila, columna)") \
-                .in_("id_producto", producto_ids) \
-                .execute()
-            productos_map = {p.get("id_producto"): p for p in (productos_result.data or [])}
-
-        # Formatear datos para facilitar uso en frontend
-        cortes_formateados = []
-        for corte in cortes:
-            producto_id = venta_producto_map.get(corte.get("venta_id"))
-            producto = productos_map.get(producto_id) or {}
-            categoria = producto.get("categoria") or {}
-            almacen = producto.get("almacen") or {}
-            ancho_cm = corte.get("ancho_cm") or 0
-            alto_cm = corte.get("alto_cm") or 0
-
-            cortes_formateados.append({
-                "id_corte": corte.get("id_corte"),
-                "ancho_cm": ancho_cm,
-                "alto_cm": alto_cm,
-                "cantidad": corte.get("cantidad"),
-                "estado": corte.get("estado"),
-                "fecha_registro": corte.get("fecha_registro"),
-                "producto_id": producto_id,
-                "producto_nombre": producto.get("nombre") or corte.get("normbre") or "Corte personalizado",
-                "producto_codigo": producto.get("codigo"),
-                "producto_descripcion": producto.get("descripcion"),
-                "categoria_id": producto.get("categoria_id"),
-                "categoria": categoria.get("descripcion") if isinstance(categoria, dict) else None,
-                "producto_almacen_fila": almacen.get("fila") if isinstance(almacen, dict) else None,
-                "producto_almacen_columna": almacen.get("columna") if isinstance(almacen, dict) else None,
-                "area_m2": round((ancho_cm * alto_cm) / 10000, 4)
-            })
-
-        return {
-            "success": True,
-            "cortes": cortes_formateados,
-            "total": len(cortes_formateados)
-        }
-
+        resultado = obtener_cortes_por_carrito(carrito_id)
+        
+        if resultado.get("success"):
+            return jsonify(resultado), 200
+        else:
+            return jsonify(resultado), 400
+    
     except Exception as e:
-        import traceback
-        print(f"[ERROR] obtener_cortes_por_carrito({carrito_id}): {str(e)}")
-        traceback.print_exc()
-        return {
+        return jsonify({
             "success": False,
             "error": str(e),
             "cortes": []
-        }
+        }), 500
 
 
-def obtener_cortes_por_cliente(cliente_id: str, solo_pendientes: bool = True) -> Dict[str, Any]:
+@cortes_produccion_bp.route("/api/cortes/carrito/<carrito_id>/agrupado", methods=["GET"])
+def get_cortes_agrupados(carrito_id):
     """
-    Obtiene todos los cortes de un cliente específico.
+    GET /api/cortes/carrito/<carrito_id>/agrupado
+    Obtiene cortes agrupados por producto para facilitar producción.
     
-    Args:
-        cliente_id: UUID del cliente
-        solo_pendientes: Si True, solo retorna cortes con estado 'pendiente'
-    
-    Returns:
-        dict con {success: bool, cortes: list, error?: str}
+    Response:
+    {
+        "success": true,
+        "productos": [
+            {
+                "producto_id": "uuid",
+                "producto_nombre": "Vidrio Templado 6mm",
+                "producto_codigo": "VT-06",
+                "categoria": "VIDRIO",
+                "total_cortes": 5,
+                "area_total_m2": 2.5,
+                "cortes": [
+                    {
+                        "id_corte": "uuid",
+                        "ancho_cm": 100,
+                        "alto_cm": 150,
+                        "cantidad": 2,
+                        "estado": "pendiente",
+                        "area_m2": 0.15
+                    }
+                ]
+            }
+        ]
+    }
     """
     try:
-        # Primero obtener todos los carritos del cliente
+        resultado = obtener_cortes_agrupados_por_producto(carrito_id)
+        
+        if resultado.get("success"):
+            return jsonify(resultado), 200
+        else:
+            return jsonify(resultado), 400
+    
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "productos": []
+        }), 500
+
+
+@cortes_produccion_bp.route("/api/cortes/cliente", methods=["GET"])
+def get_cortes_por_nombre_cliente():
+    """
+    GET /api/cortes/cliente?nombre=Carlos%20Rojas
+    Obtiene todos los cortes de un cliente buscando por nombre.
+    
+    Query params:
+        nombre: Nombre del cliente (URL encoded)
+    """
+    try:
+        nombre_cliente = request.args.get('nombre', '').strip()
+        
+        if not nombre_cliente:
+            return jsonify({
+                "success": False,
+                "error": "Parámetro 'nombre' requerido",
+                "cortes": []
+            }), 400
+        
+        print(f"[CORTES] Buscando cortes por nombre de cliente: '{nombre_cliente}'")
+        
+        # Obtener todos los carritos
+        from app.services.supabase_client import supabase
+        
+        # Buscar cliente por nombre (contains search)
+        clientes_result = supabase.table("cliente") \
+            .select("id_cliente") \
+            .ilike("nombre", f"%{nombre_cliente}%") \
+            .execute()
+        
+        cliente_ids = [c.get("id_cliente") for c in (clientes_result.data or [])]
+        
+        if not cliente_ids:
+            print(f"[CORTES] Cliente no encontrado por tabla cliente, buscando por cortes.normbre: {nombre_cliente}")
+
+            cortes_directos_result = supabase.table("cortes") \
+                .select("id_corte, ancho_cm, alto_cm, cantidad, estado, fecha_registro, producto_id, carrito_id, normbre, productos(nombre, codigo, categoria_id, categoria(descripcion), almacen(fila, columna))") \
+                .ilike("normbre", f"%{nombre_cliente}%") \
+                .execute()
+
+            cortes_directos = cortes_directos_result.data or []
+
+            print(f"[CORTES] ✓ Se encontraron {len(cortes_directos)} cortes por normbre")
+
+            return jsonify({
+                "success": True,
+                "cortes": cortes_directos,
+                "total": len(cortes_directos)
+            }), 200
+        
+        # Obtener carritos del cliente
         carritos_result = supabase.table("carrito_compras") \
-            .select("id_carrito, estado") \
-            .eq("cliente_id", cliente_id) \
+            .select("id_carrito") \
+            .in_("cliente_id", cliente_ids) \
             .execute()
         
         carrito_ids = [c.get("id_carrito") for c in (carritos_result.data or [])]
         
         if not carrito_ids:
-            return {
+            print(f"[CORTES] Cliente encontrado pero sin carritos")
+            return jsonify({
                 "success": True,
                 "cortes": [],
-                "total": 0
-            }
+                "message": "Cliente no tiene carritos"
+            }), 200
         
         # Obtener cortes de esos carritos
-        query = supabase.table("cortes") \
-            .select("*, productos(nombre, codigo, descripcion, categoria_id, categoria(descripcion), almacen(fila, columna))") \
-            .in_("carrito_id", carrito_ids)
+        cortes_result = supabase.table("cortes") \
+            .select("id_corte, ancho_cm, alto_cm, cantidad, estado, fecha_registro, producto_id, carrito_id, productos(nombre, codigo, categoria_id, categoria(descripcion), almacen(fila, columna))") \
+            .in_("carrito_id", carrito_ids) \
+            .execute()
         
-        if solo_pendientes:
-            query = query.eq("estado", "pendiente")
-        
-        cortes_result = query.execute()
         cortes = cortes_result.data or []
         
-        # Si la consulta compleja falla, intentar simple
-        if not cortes and len(carrito_ids) > 0:
-            query = supabase.table("cortes") \
-                .select("*") \
-                .in_("carrito_id", carrito_ids)
-            
-            if solo_pendientes:
-                query = query.eq("estado", "pendiente")
-            
-            cortes_result = query.execute()
-            cortes = cortes_result.data or []
+        print(f"[CORTES] ✓ Se encontraron {len(cortes)} cortes para cliente: {nombre_cliente}")
         
-        # Formatear
-        cortes_formateados = []
-        for corte in cortes:
-            producto = corte.get("productos") or {}
-            categoria = producto.get("categoria") or {} if isinstance(producto, dict) else {}
-            almacen = producto.get("almacen") or {} if isinstance(producto, dict) else {}
-            
-            cortes_formateados.append({
-                "id_corte": corte.get("id_corte"),
-                "ancho_cm": corte.get("ancho_cm"),
-                "alto_cm": corte.get("alto_cm"),
-                "cantidad": corte.get("cantidad"),
-                "estado": corte.get("estado"),
-                "fecha_registro": corte.get("fecha_registro"),
-                "carrito_id": corte.get("carrito_id"),
-                "producto_id": corte.get("producto_id"),
-                "producto_nombre": producto.get("nombre") if isinstance(producto, dict) else None,
-                "producto_codigo": producto.get("codigo") if isinstance(producto, dict) else None,
-                "producto_descripcion": producto.get("descripcion") if isinstance(producto, dict) else None,
-                "categoria_id": producto.get("categoria_id") if isinstance(producto, dict) else None,
-                "categoria": categoria.get("descripcion") if isinstance(categoria, dict) else None,
-                "producto_almacen_fila": almacen.get("fila") if isinstance(almacen, dict) else None,
-                "producto_almacen_columna": almacen.get("columna") if isinstance(almacen, dict) else None,
-                "area_m2": round((corte.get("ancho_cm", 0) * corte.get("alto_cm", 0)) / 10000, 4)
-            })
-        
-        return {
+        return jsonify({
             "success": True,
-            "cortes": cortes_formateados,
-            "total": len(cortes_formateados)
-        }
-    
+            "cortes": cortes,
+            "total": len(cortes)
+        }), 200
+        
     except Exception as e:
-        return {
+        print(f"[CORTES] ❌ Error: {str(e)}")
+        return jsonify({
             "success": False,
             "error": str(e),
             "cortes": []
-        }
+        }), 500
 
 
-def obtener_cortes_agrupados_por_producto(carrito_id: str) -> Dict[str, Any]:
-    """
-    Obtiene cortes agrupados por producto para facilitar producción.
-    
-    Args:
-        carrito_id: UUID del carrito
-    
-    Returns:
-        dict con {success: bool, productos: list[{producto, cortes: list}], error?: str}
-    """
-    try:
-        resultado = obtener_cortes_por_carrito(carrito_id)
+        solo_pendientes = request.args.get("solo_pendientes", "true").lower() == "true"
         
-        if not resultado.get("success"):
-            return resultado
+        resultado = obtener_cortes_por_cliente(cliente_id, solo_pendientes=solo_pendientes)
         
-        cortes = resultado.get("cortes", [])
-        
-        # Agrupar por producto
-        productos_dict = {}
-        for corte in cortes:
-            producto_id = corte.get("producto_id")
-            
-            if producto_id not in productos_dict:
-                productos_dict[producto_id] = {
-                    "producto_id": producto_id,
-                    "producto_nombre": corte.get("producto_nombre"),
-                    "producto_codigo": corte.get("producto_codigo"),
-                    "producto_descripcion": corte.get("producto_descripcion"),
-                    "categoria_id": corte.get("categoria_id"),
-                    "categoria": corte.get("categoria"),
-                    "producto_almacen_fila": corte.get("producto_almacen_fila"),
-                    "producto_almacen_columna": corte.get("producto_almacen_columna"),
-                    "cortes": [],
-                    "total_cortes": 0,
-                    "area_total_m2": 0
-                }
-            
-            productos_dict[producto_id]["cortes"].append({
-                "id_corte": corte.get("id_corte"),
-                "ancho_cm": corte.get("ancho_cm"),
-                "alto_cm": corte.get("alto_cm"),
-                "cantidad": corte.get("cantidad"),
-                "estado": corte.get("estado"),
-                "fecha_registro": corte.get("fecha_registro"),
-                "area_m2": corte.get("area_m2")
-            })
-            
-            productos_dict[producto_id]["total_cortes"] += corte.get("cantidad", 0)
-            productos_dict[producto_id]["area_total_m2"] += corte.get("area_m2", 0) * corte.get("cantidad", 0)
-        
-        # Convertir a lista
-        productos_list = list(productos_dict.values())
-        
-        # Redondear áreas totales
-        for prod in productos_list:
-            prod["area_total_m2"] = round(prod["area_total_m2"], 4)
-        
-        return {
-            "success": True,
-            "productos": productos_list,
-            "total_productos": len(productos_list)
-        }
+        if resultado.get("success"):
+            return jsonify(resultado), 200
+        else:
+            return jsonify(resultado), 400
     
     except Exception as e:
-        return {
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "cortes": []
+        }), 500
+
+
+# ========================================
+# ACTUALIZAR ESTADOS
+# ========================================
+
+@cortes_produccion_bp.route("/api/cortes/<corte_id>/estado", methods=["PUT"])
+def actualizar_estado_corte_endpoint(corte_id):
+    """
+    PUT /api/cortes/<corte_id>/estado
+    Body: {"estado": "en_proceso" | "completado" | "pendiente"}
+    
+    Actualiza el estado de un corte específico.
+    """
+    try:
+        data = request.get_json() or {}
+        nuevo_estado = data.get("estado")
+        
+        if not nuevo_estado:
+            return jsonify({
+                "success": False,
+                "error": "Falta el campo 'estado'"
+            }), 400
+        
+        resultado = actualizar_estado_corte(corte_id, nuevo_estado)
+        
+        if resultado.get("success"):
+            return jsonify(resultado), 200
+        else:
+            return jsonify(resultado), 400
+    
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@cortes_produccion_bp.route("/api/cortes/eliminar", methods=["POST"])
+def eliminar_cortes_endpoint():
+    """
+    POST /api/cortes/eliminar
+    Body: {"ids": ["uuid", ...]}
+    """
+    try:
+        data = request.get_json() or {}
+        ids = data.get("ids") or []
+
+        resultado = eliminar_cortes(ids)
+        if resultado.get("success"):
+            return jsonify({"success": True, "eliminados": resultado.get("eliminados", 0)}), 200
+
+        return jsonify({
+            "success": False,
+            "error": resultado.get("error", "Error al eliminar cortes")
+        }), 400
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@cortes_produccion_bp.route("/api/cortes/<corte_id>/descontar", methods=["POST"])
+def descontar_corte_endpoint(corte_id):
+    """
+    POST /api/cortes/<corte_id>/descontar
+    Body: {"cantidad": 1}
+
+    Descuenta cantidad del corte. Si queda en 0, elimina el registro.
+    """
+    try:
+        data = request.get_json() or {}
+        cantidad = int(data.get("cantidad", 1))
+
+        if cantidad <= 0:
+            return jsonify({
+                "success": False,
+                "error": "La cantidad debe ser mayor a 0"
+            }), 400
+
+        resultado = reducir_cantidad_corte(corte_id, cantidad)
+
+        if resultado.get("success"):
+            return jsonify(resultado), 200
+
+        return jsonify(resultado), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@cortes_produccion_bp.route("/api/cortes/carrito/<carrito_id>/estado", methods=["PUT"])
+def actualizar_estados_carrito_endpoint(carrito_id):
+    """
+    PUT /api/cortes/carrito/<carrito_id>/estado
+    Body: {"estado": "completado"}
+    
+    Actualiza el estado de todos los cortes de un carrito.
+    Útil para marcar todo como completado cuando se termina el trabajo.
+    """
+    try:
+        data = request.get_json() or {}
+        nuevo_estado = data.get("estado")
+        
+        if not nuevo_estado:
+            return jsonify({
+                "success": False,
+                "error": "Falta el campo 'estado'"
+            }), 400
+        
+        resultado = actualizar_estados_cortes_carrito(carrito_id, nuevo_estado)
+        
+        if resultado.get("success"):
+            return jsonify(resultado), 200
+        else:
+            return jsonify(resultado), 400
+    
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ========================================
+# OBTENER CORTES POR NOTIFICACIÓN
+# ========================================
+
+@cortes_produccion_bp.route("/api/cortes/notificacion/<notificacion_id>", methods=["GET"])
+def get_cortes_por_notificacion(notificacion_id):
+    """
+    GET /api/cortes/notificacion/<notificacion_id>
+    
+    Obtiene los cortes asociados a una notificación de entrega.
+    Lee el carrito_id desde el campo descripcion (JSON) de la notificación.
+    """
+    try:
+        from app.services.supabase_client import supabase
+        import json
+        import re
+        
+        # 1. Obtener notificación
+        notif_result = supabase.table("notificacion") \
+            .select("descripcion, venta_id") \
+            .eq("id_notificacion", notificacion_id) \
+            .limit(1) \
+            .execute()
+
+        if not notif_result.data:
+            return jsonify({
+                "success": False,
+                "error": "Notificación no encontrada"
+            }), 404
+
+        notif = notif_result.data[0]
+        descripcion = notif.get("descripcion", "{}")
+
+        # 'notificacion' no tiene id_cliente propio; se resuelve vía venta_id.
+        cliente_id = None
+        registro_pago_id = None
+        venta_id = notif.get("venta_id")
+        if venta_id:
+            try:
+                venta_res = supabase.table("venta").select("cliente_id, registro_pago_id").eq("id_venta", venta_id).limit(1).execute()
+                if venta_res.data:
+                    cliente_id = venta_res.data[0].get("cliente_id")
+                    registro_pago_id = venta_res.data[0].get("registro_pago_id")
+            except Exception:
+                cliente_id = None
+
+        # Monto pagado (via registro_pago) y, solo si supera S/ 1000, la
+        # ubicación de entrega más reciente del cliente (ruta a seguir).
+        total_pago = None
+        ubicacion = None
+        if registro_pago_id:
+            try:
+                pago_res = supabase.table("registro_pago").select("total").eq("id_registro", registro_pago_id).limit(1).execute()
+                if pago_res.data:
+                    total_pago = pago_res.data[0].get("total")
+            except Exception:
+                total_pago = None
+
+        if cliente_id and total_pago is not None and float(total_pago) > 1000:
+            try:
+                ubic_res = supabase.table("ubicacion") \
+                    .select("direccion, referencia, latitud, longitud, fecha_creacion") \
+                    .eq("cliente_id", cliente_id) \
+                    .order("fecha_creacion", desc=True) \
+                    .limit(1) \
+                    .execute()
+                if ubic_res.data:
+                    ubicacion = ubic_res.data[0]
+            except Exception:
+                ubicacion = None
+
+        # 2. Obtener carrito_id desde JSON o texto libre
+        carrito_id = None
+        try:
+            meta = json.loads(descripcion)
+            if isinstance(meta, dict):
+                carrito_id = meta.get("carrito_id")
+        except Exception:
+            carrito_id = None
+
+        # Fallback: descripcion tipo "Pago ... (Carrito: <uuid>)"
+        if not carrito_id and isinstance(descripcion, str):
+            match = re.search(r"Carrito:\s*([0-9a-fA-F-]{36})", descripcion)
+            if match:
+                carrito_id = match.group(1)
+        
+        if not carrito_id:
+            return jsonify({
+                "success": True,
+                "message": "El cliente no agregó cortes",
+                "productos": [],
+                "total_productos": 0,
+                "cliente_id": cliente_id,
+                "carrito_id": None,
+                "total_pago": total_pago,
+                "ubicacion": ubicacion
+            }), 200
+
+        # 3. Obtener cortes del carrito agrupados por producto
+        resultado = obtener_cortes_agrupados_por_producto(carrito_id)
+
+        if resultado.get("success"):
+            # Agregar información de cliente
+            resultado["cliente_id"] = cliente_id
+            resultado["carrito_id"] = carrito_id
+            resultado["total_pago"] = total_pago
+            resultado["ubicacion"] = ubicacion
+            if not resultado.get("productos"):
+                resultado["message"] = "El cliente no agregó cortes"
+            return jsonify(resultado), 200
+
+        return jsonify({
+            "success": True,
+            "message": "El cliente no agregó cortes",
+            "productos": [],
+            "total_productos": 0,
+            "cliente_id": cliente_id,
+            "carrito_id": carrito_id,
+            "total_pago": total_pago,
+            "ubicacion": ubicacion
+        }), 200
+    
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] get_cortes_por_notificacion({notificacion_id}): {str(e)}")
+        traceback.print_exc()
+        return jsonify({
             "success": False,
             "error": str(e),
             "productos": []
-        }
-
-
-def actualizar_estado_corte(corte_id: str, nuevo_estado: str) -> Dict[str, Any]:
-    """
-    Actualiza el estado de un corte específico.
-    
-    Args:
-        corte_id: UUID del corte
-        nuevo_estado: Nuevo estado (ej: 'en_proceso', 'completado', 'pendiente')
-    
-    Returns:
-        dict con {success: bool, error?: str}
-    """
-    try:
-        # Verificar que existe
-        check = supabase.table("cortes") \
-            .select("id_corte") \
-            .eq("id_corte", corte_id) \
-            .limit(1) \
-            .execute()
-        
-        if not check.data:
-            return {"success": False, "error": "Corte no encontrado"}
-        
-        # Actualizar
-        update_result = supabase.table("cortes") \
-            .update({"estado": nuevo_estado}) \
-            .eq("id_corte", corte_id) \
-            .execute()
-        
-        return {"success": True, "estado": nuevo_estado}
-    
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-def actualizar_estados_cortes_carrito(carrito_id: str, nuevo_estado: str) -> Dict[str, Any]:
-    """
-    Actualiza el estado de todos los cortes de un carrito.
-    
-    Args:
-        carrito_id: UUID del carrito
-        nuevo_estado: Nuevo estado para todos los cortes
-    
-    Returns:
-        dict con {success: bool, actualizados: int, error?: str}
-    """
-    try:
-        update_result = supabase.table("cortes") \
-            .update({"estado": nuevo_estado}) \
-            .eq("carrito_id", carrito_id) \
-            .execute()
-        
-        cantidad_actualizada = len(update_result.data or [])
-        
-        return {
-            "success": True,
-            "actualizados": cantidad_actualizada,
-            "estado": nuevo_estado
-        }
-    
-    except Exception as e:
-        return {"success": False, "error": str(e), "actualizados": 0}
-
-
-def eliminar_cortes(ids_corte: List[str]) -> Dict[str, Any]:
-    """
-    Elimina cortes por lista de IDs.
-
-    Args:
-        ids_corte: Lista de UUIDs.
-
-    Returns:
-        dict con {success: bool, eliminados: int, error?: str}
-    """
-    try:
-        if not ids_corte:
-            return {"success": False, "error": "Lista de cortes vacia", "eliminados": 0}
-
-        result = supabase.table("cortes") \
-            .delete() \
-            .in_("id_corte", ids_corte) \
-            .execute()
-
-        eliminados = len(result.data or [])
-        return {"success": True, "eliminados": eliminados}
-    except Exception as e:
-        return {"success": False, "error": str(e), "eliminados": 0}
-
-
-def reducir_cantidad_corte(corte_id: str, cantidad: int = 1) -> Dict[str, Any]:
-    """
-    Reduce la cantidad de un corte en 'cantidad' unidades.
-    Si la cantidad resultante es <= 0, elimina el registro.
-
-    Args:
-        corte_id: UUID del corte.
-        cantidad: Unidades a descontar (default: 1).
-
-    Returns:
-        dict con {success: bool, eliminado: bool, nueva_cantidad: int}
-    """
-    try:
-        result = supabase.table("cortes") \
-            .select("id_corte, cantidad") \
-            .eq("id_corte", corte_id) \
-            .single() \
-            .execute()
-
-        if not result.data:
-            return {"success": False, "error": "Corte no encontrado"}
-
-        cantidad_actual = int(result.data.get("cantidad", 0) or 0)
-        nueva_cantidad = cantidad_actual - cantidad
-
-        if nueva_cantidad <= 0:
-            supabase.table("cortes") \
-                .delete() \
-                .eq("id_corte", corte_id) \
-                .execute()
-            return {"success": True, "eliminado": True, "nueva_cantidad": 0}
-
-        supabase.table("cortes") \
-            .update({"cantidad": nueva_cantidad}) \
-            .eq("id_corte", corte_id) \
-            .execute()
-
-        return {"success": True, "eliminado": False, "nueva_cantidad": nueva_cantidad}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+        }), 500
