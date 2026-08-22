@@ -99,3 +99,4 @@ def obtener_ubicacion_para_ruta(carrito_id):
 
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
