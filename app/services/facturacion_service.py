@@ -10,7 +10,7 @@ class FacturacionService:
     """
 
     # MODO PRODUCCION: llama a APISPeru y emite comprobantes reales (SUNAT).
-    MODO_PRUEBA = False
+    MODO_PRUEBA = True
 
     # URL CORRECTA (el ambiente beta/producción se define al crear la empresa)
     URL = "https://facturacion.apisperu.com/api/v1/invoice/send"

@@ -91,7 +91,7 @@ def _sanitize_for_log(value, _depth=0):
 class MercadoPagoService:
 
     # MODO PRODUCCION: llama a la API real de Mercado Pago y cobra de verdad.
-    MODO_PRUEBA = False
+    MODO_PRUEBA = True
 
     def __init__(self):
         access_token = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
