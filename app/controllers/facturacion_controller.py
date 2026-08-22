@@ -179,6 +179,7 @@ def emitir_comprobante():
 
                 ubicacion_insert = supabase.table("ubicacion").insert({
                     "cliente_id": ubicacion.get("cliente_id") or None,
+                    "carrito_id": ubicacion.get("carrito_id") or None,
                     "direccion": ubicacion.get("direccion"),
                     "referencia": ubicacion.get("referencia"),
                     "latitud": ubicacion.get("latitud"),

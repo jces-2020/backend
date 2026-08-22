@@ -75,15 +75,36 @@ def obtener_ubicacion_para_ruta(carrito_id):
         if not cliente_id:
             return jsonify({"success": False, "message": "No se pudo resolver el cliente de este carrito"}), 404
 
-        ubi_res = (
-            supabase.table("ubicacion")
-            .select("direccion, referencia, latitud, longitud, fecha_creacion")
-            .eq("cliente_id", cliente_id)
-            .order("fecha_creacion", desc=True)
-            .limit(1)
-            .execute()
-        )
-        filas = getattr(ubi_res, "data", []) or []
+        # 1) Ubicacion guardada especificamente para ESTE pedido (carrito_id
+        # exacto) -- un mismo cliente puede tener varias direcciones si hizo
+        # varios pedidos, y cada una vive en una fila distinta de ubicacion.
+        filas = []
+        try:
+            ubi_carrito = (
+                supabase.table("ubicacion")
+                .select("direccion, referencia, latitud, longitud, fecha_creacion")
+                .eq("carrito_id", carrito_id)
+                .order("fecha_creacion", desc=True)
+                .limit(1)
+                .execute()
+            )
+            filas = getattr(ubi_carrito, "data", []) or []
+        except Exception as exc_carrito:
+            print(f"[ubicacion_ruta] WARN no se pudo filtrar por carrito_id: {exc_carrito}")
+
+        # 2) Respaldo: pedidos anteriores a este enlace (o si por algun motivo
+        # no quedo guardado el carrito_id) -- se usa la mas reciente del cliente.
+        if not filas:
+            ubi_cliente = (
+                supabase.table("ubicacion")
+                .select("direccion, referencia, latitud, longitud, fecha_creacion")
+                .eq("cliente_id", cliente_id)
+                .order("fecha_creacion", desc=True)
+                .limit(1)
+                .execute()
+            )
+            filas = getattr(ubi_cliente, "data", []) or []
+
         if not filas or filas[0].get("latitud") is None or filas[0].get("longitud") is None:
             return jsonify({"success": False, "message": "El cliente no tiene una ubicacion guardada"}), 200
 
@@ -99,4 +120,3 @@ def obtener_ubicacion_para_ruta(carrito_id):
 
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
-
