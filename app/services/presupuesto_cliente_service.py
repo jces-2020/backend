@@ -93,6 +93,8 @@ def guardar_multiples_presupuestos(
     presupuestos_list: List[Dict],
     documento: str,
     nombre_apis: str,
+    fecha_remetro: Optional[str] = None,
+    ubicacion: Optional[Dict] = None,
 ) -> Tuple[bool, str, List[str], Optional[Dict], bool, Optional[str]]:
     """
     Guarda múltiples presupuestos en la tabla 'presupuesto' y crea una sola
@@ -101,8 +103,12 @@ def guardar_multiples_presupuestos(
     Flujo:
       1. Buscar cliente por documento en tabla cliente
       2. Si no existe → crear cuenta temporal
-      3. Insertar cada presupuesto (servicio_id, descripcion, total, ancho, alto)
-      4. Crear UNA notificación con JSON: {presupuesto_ids, total_general, cantidad_servicios}
+      3. Insertar cada presupuesto (servicio_id, descripcion, total, ancho, alto,
+         fecha_remetro -- la fecha en la que se ira a tomar las medidas exactas)
+      4. Si se envio ubicacion (direccion/referencia/lat/lng), guardar UNA fila
+         en 'ubicacion' ligada al cliente y al primer presupuesto del lote
+         (todo el lote comparte una sola visita de remetro)
+      5. Crear UNA notificación con JSON: {presupuesto_ids, total_general, cantidad_servicios}
 
     Retorna:
     (success, message, presupuesto_ids, cliente_data, cliente_fue_creado, jwt_temporal)
@@ -139,6 +145,8 @@ def guardar_multiples_presupuestos(
                 'descripcion': pres.get('descripcion') or pres.get('nombre_servicio') or '',
                 'total':       round(total, 2),
             }
+            if fecha_remetro:
+                pres_insert['fecha_remetro'] = fecha_remetro
             if ancho_val:
                 try:
                     pres_insert['ancho'] = float(ancho_val)
@@ -176,7 +184,22 @@ def guardar_multiples_presupuestos(
         if not pres_ids:
             return False, "No se pudieron guardar los presupuestos", [], cliente, cliente_creado, jwt_temporal
 
-        # 4. Crear una sola notificación por lote vinculada a la primera venta ficticia
+        # 4. Ubicacion para el remetro (una sola fila para todo el lote: es una
+        # sola visita la que cubre todos los servicios presupuestados juntos).
+        if ubicacion and ubicacion.get('latitud') is not None and ubicacion.get('longitud') is not None:
+            try:
+                supabase.table('ubicacion').insert({
+                    'cliente_id':     cliente_id,
+                    'presupuesto_id': pres_ids[0],
+                    'direccion':      ubicacion.get('direccion'),
+                    'referencia':     ubicacion.get('referencia'),
+                    'latitud':        ubicacion.get('latitud'),
+                    'longitud':       ubicacion.get('longitud'),
+                }).execute()
+            except Exception as exc_ubi:
+                print(f"Error guardando ubicacion de remetro: {exc_ubi}")
+
+        # 5. Crear una sola notificación por lote vinculada a la primera venta ficticia
         meta = {
             'presupuesto_ids':    pres_ids,
             'total_general':      round(total_general, 2),

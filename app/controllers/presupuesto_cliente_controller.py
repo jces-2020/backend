@@ -29,7 +29,12 @@ def guardar_presupuestos_con_cliente():
                 "alto": 90,
                 "total": 350.00
             }
-        ]
+        ],
+        "fecha_remetro": "2026-08-25",   # opcional: cuando se ira a tomar medidas
+        "ubicacion": {                    # opcional: direccion de esa visita
+            "direccion": "...", "referencia": "...",
+            "latitud": -12.06, "longitud": -75.20
+        }
     }
     """
     try:
@@ -41,6 +46,8 @@ def guardar_presupuestos_con_cliente():
         documento       = (data.get("documento") or "").strip()
         nombre_apis     = (data.get("nombre_apis") or "Cliente").strip()
         presupuestos_list = data.get("presupuestos", [])
+        fecha_remetro   = (data.get("fecha_remetro") or "").strip() or None
+        ubicacion       = data.get("ubicacion")
 
         if not documento:
             return jsonify({"success": False, "message": "El documento es requerido"}), 400
@@ -53,6 +60,8 @@ def guardar_presupuestos_con_cliente():
             presupuestos_list,
             documento,
             nombre_apis,
+            fecha_remetro=fecha_remetro,
+            ubicacion=ubicacion,
         )
 
         if success:
