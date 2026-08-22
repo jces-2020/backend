@@ -442,27 +442,29 @@ def barra_progreso_servicio(cliente_id):
             }), 200
 
         # fecha_servicio (instalacion) vive en notificacion.descripcion.remetro,
-        # ligada via venta.carrito_id -> venta.id_venta -> notificacion.venta_id.
+        # de la notificacion ORIGINAL de la cotizacion (creada con
+        # presupuesto_ids, cuyo venta_id apunta a la venta "ficticia" del
+        # presupuesto, no al carrito real). El puente es presupuesto_id:
+        # venta(carrito_id=X).presupuesto_id -> aparece en
+        # notificacion.descripcion.presupuesto_ids de esa notificacion.
         fecha_servicio_por_carrito = {}
         try:
             ids_activos = [s.get('id_carrito') for s in servicios_activos if s.get('id_carrito')]
             ventas_full = supabase.table('venta') \
-                .select('id_venta, carrito_id') \
+                .select('carrito_id, presupuesto_id') \
                 .in_('carrito_id', ids_activos) \
                 .execute()
-            venta_a_carrito = {
-                v.get('id_venta'): v.get('carrito_id')
-                for v in (ventas_full.data or []) if v.get('id_venta')
+            carrito_a_presupuesto = {
+                v.get('carrito_id'): v.get('presupuesto_id')
+                for v in (ventas_full.data or []) if v.get('presupuesto_id')
             }
-            if venta_a_carrito:
+            if carrito_a_presupuesto:
                 notifs_res = supabase.table('notificacion') \
-                    .select('venta_id, descripcion') \
-                    .in_('venta_id', list(venta_a_carrito.keys())) \
+                    .select('descripcion') \
+                    .eq('tipo', 'servicio') \
                     .execute()
+                presupuesto_a_fecha = {}
                 for n in (notifs_res.data or []):
-                    carrito_id = venta_a_carrito.get(n.get('venta_id'))
-                    if not carrito_id:
-                        continue
                     desc = n.get('descripcion')
                     meta = {}
                     if isinstance(desc, dict):
@@ -475,6 +477,13 @@ def barra_progreso_servicio(cliente_id):
                         except Exception:
                             meta = {}
                     fecha = (meta.get('remetro') or {}).get('fecha_servicio')
+                    if not fecha:
+                        continue
+                    for pid in (meta.get('presupuesto_ids') or []):
+                        presupuesto_a_fecha[pid] = fecha
+
+                for carrito_id, presupuesto_id in carrito_a_presupuesto.items():
+                    fecha = presupuesto_a_fecha.get(presupuesto_id)
                     if fecha:
                         fecha_servicio_por_carrito[carrito_id] = fecha
         except Exception as exc:
