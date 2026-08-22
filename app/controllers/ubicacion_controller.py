@@ -3,11 +3,16 @@ Controller de Ubicacion / Geocodificacion
 Endpoints:
 
 POST /api/reverse-geocode
+GET  /api/ubicacion/ruta/<carrito_id>
 """
 
 import os
 import requests
 from flask import Blueprint, request, jsonify
+
+from app.controllers.pedidos_detalle_controller import _require_personal
+from app.services.supabase_client import supabase
+from app.services.venta_detalle_service import obtener_cliente_id_por_carrito
 
 ubicacion_bp = Blueprint('ubicacion', __name__, url_prefix='/api')
 
@@ -51,5 +56,46 @@ def reverse_geocode():
 
     except requests.RequestException as e:
         return jsonify({"success": False, "message": str(e)}), 502
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@ubicacion_bp.route('/ubicacion/ruta/<carrito_id>', methods=['GET'])
+def obtener_ubicacion_para_ruta(carrito_id):
+    """Resuelve la ultima ubicacion guardada del cliente dueno de un carrito.
+
+    Usado por Entrega/Servicio (OBRAS) para trazar la ruta de entrega en el mapa.
+    """
+    try:
+        ok, resp = _require_personal(request, allowed_areas=['ALMACEN', 'ADMINISTRACION', 'OBRAS', 'TRABAJO'])
+        if not ok:
+            return resp
+
+        cliente_id = obtener_cliente_id_por_carrito(carrito_id)
+        if not cliente_id:
+            return jsonify({"success": False, "message": "No se pudo resolver el cliente de este carrito"}), 404
+
+        ubi_res = (
+            supabase.table("ubicacion")
+            .select("direccion, referencia, latitud, longitud, fecha_creacion")
+            .eq("cliente_id", cliente_id)
+            .order("fecha_creacion", desc=True)
+            .limit(1)
+            .execute()
+        )
+        filas = getattr(ubi_res, "data", []) or []
+        if not filas or filas[0].get("latitud") is None or filas[0].get("longitud") is None:
+            return jsonify({"success": False, "message": "El cliente no tiene una ubicacion guardada"}), 200
+
+        ubicacion = filas[0]
+        return jsonify({
+            "success": True,
+            "cliente_id": cliente_id,
+            "direccion": ubicacion.get("direccion"),
+            "referencia": ubicacion.get("referencia"),
+            "latitud": float(ubicacion.get("latitud")),
+            "longitud": float(ubicacion.get("longitud")),
+        }), 200
+
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
