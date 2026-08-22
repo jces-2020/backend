@@ -126,12 +126,14 @@ def obtener_payload_cuadre_caja(fecha=None):
                 print(f"[caja_cuadre] error consultando clientes: {exc_clientes}")
 
         # Construir comprobantes y calcular totales por tipo
+        vistos_registro_pago = set()
         for tipo_id, venta_lista in ventas_por_tipo.items():
             tipo_label = tipo_venta_map.get(tipo_id, tipo_id)
             subtotal_tipo = 0.0
 
             for venta in venta_lista:
-                registro = registro_map.get(venta.get("registro_pago_id")) if venta.get("registro_pago_id") else None
+                registro_pago_id = venta.get("registro_pago_id")
+                registro = registro_map.get(registro_pago_id) if registro_pago_id else None
                 documento = (registro.get("documento") if registro else "") or ""
                 monto_venta = float(venta.get("monto") or (registro.get("total") if registro else 0) or 0)
 
@@ -142,8 +144,23 @@ def obtener_payload_cuadre_caja(fecha=None):
                 totales["total"] += monto_venta
                 subtotal_tipo += monto_venta
 
+                # Un mismo registro_pago (un comprobante/PDF real) puede cubrir
+                # varias lineas de venta (varios productos en un mismo pedido).
+                # Los totales de arriba SI deben sumar cada linea, pero la
+                # lista de comprobantes debe mostrar solo UNA fila por
+                # comprobante real, no una por cada producto.
+                if registro_pago_id:
+                    if registro_pago_id in vistos_registro_pago:
+                        continue
+                    vistos_registro_pago.add(registro_pago_id)
+
                 cliente_nombre = cliente_map.get(venta.get("cliente_id"), "-")
                 metodo_desc = (venta.get("metodo") or "").strip() or "-"
+                monto_comprobante = (
+                    float(registro.get("total"))
+                    if registro and registro.get("total") is not None
+                    else monto_venta
+                )
                 numero_comprobante = documento or f"VENTA-{str(venta.get('id_venta') or '')[:8]}"
                 documento_url = documento if isinstance(documento, str) and documento.startswith("http") else None
 
@@ -152,7 +169,7 @@ def obtener_payload_cuadre_caja(fecha=None):
                     "numero": numero_comprobante,
                     "cliente": cliente_nombre,
                     "metodo_pago": metodo_desc,
-                    "monto": monto_venta,
+                    "monto": monto_comprobante,
                     "fecha": venta.get("fecha_venta") or (registro.get("fecha") if registro else "") or "",
                     "documento": documento,
                     "documento_url": documento_url,
