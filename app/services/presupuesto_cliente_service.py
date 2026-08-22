@@ -224,4 +224,3 @@ def guardar_multiples_presupuestos(
         import traceback
         traceback.print_exc()
         return False, f"Error del servidor: {str(e)}", [], None, False, None
-

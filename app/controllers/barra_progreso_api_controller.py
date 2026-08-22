@@ -441,6 +441,45 @@ def barra_progreso_servicio(cliente_id):
                 'items': []
             }), 200
 
+        # fecha_servicio (instalacion) vive en notificacion.descripcion.remetro,
+        # ligada via venta.carrito_id -> venta.id_venta -> notificacion.venta_id.
+        fecha_servicio_por_carrito = {}
+        try:
+            ids_activos = [s.get('id_carrito') for s in servicios_activos if s.get('id_carrito')]
+            ventas_full = supabase.table('venta') \
+                .select('id_venta, carrito_id') \
+                .in_('carrito_id', ids_activos) \
+                .execute()
+            venta_a_carrito = {
+                v.get('id_venta'): v.get('carrito_id')
+                for v in (ventas_full.data or []) if v.get('id_venta')
+            }
+            if venta_a_carrito:
+                notifs_res = supabase.table('notificacion') \
+                    .select('venta_id, descripcion') \
+                    .in_('venta_id', list(venta_a_carrito.keys())) \
+                    .execute()
+                for n in (notifs_res.data or []):
+                    carrito_id = venta_a_carrito.get(n.get('venta_id'))
+                    if not carrito_id:
+                        continue
+                    desc = n.get('descripcion')
+                    meta = {}
+                    if isinstance(desc, dict):
+                        meta = desc
+                    elif isinstance(desc, str) and desc.strip():
+                        try:
+                            loaded = json.loads(desc)
+                            if isinstance(loaded, dict):
+                                meta = loaded
+                        except Exception:
+                            meta = {}
+                    fecha = (meta.get('remetro') or {}).get('fecha_servicio')
+                    if fecha:
+                        fecha_servicio_por_carrito[carrito_id] = fecha
+        except Exception as exc:
+            print(f"[barra_progreso_servicio] WARN no se pudo resolver fecha_servicio: {exc}")
+
         items = []
         for servicio in servicios_activos:
             estado_barra, progreso = _map_estado_servicio(servicio.get('estado'))
@@ -448,7 +487,8 @@ def barra_progreso_servicio(cliente_id):
                 'carrito_id': servicio.get('id_carrito'),
                 'estado': estado_barra,
                 'progreso': progreso,
-                'mostrar_barra': True
+                'mostrar_barra': True,
+                'fecha_servicio': fecha_servicio_por_carrito.get(servicio.get('id_carrito'))
             })
 
         principal = items[0]

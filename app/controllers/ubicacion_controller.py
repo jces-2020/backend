@@ -4,6 +4,7 @@ Endpoints:
 
 POST /api/reverse-geocode
 GET  /api/ubicacion/ruta/<carrito_id>
+GET  /api/ubicacion/ruta/presupuesto/<presupuesto_id>
 """
 
 import os
@@ -112,6 +113,45 @@ def obtener_ubicacion_para_ruta(carrito_id):
         return jsonify({
             "success": True,
             "cliente_id": cliente_id,
+            "direccion": ubicacion.get("direccion"),
+            "referencia": ubicacion.get("referencia"),
+            "latitud": float(ubicacion.get("latitud")),
+            "longitud": float(ubicacion.get("longitud")),
+        }), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@ubicacion_bp.route('/ubicacion/ruta/presupuesto/<presupuesto_id>', methods=['GET'])
+def obtener_ubicacion_para_ruta_presupuesto(presupuesto_id):
+    """Ubicacion guardada para un presupuesto de servicio (visita de remetro).
+
+    A diferencia de un pedido de producto, un servicio recien cotizado
+    todavia no tiene carrito_compras -- la ubicacion se guardo directo con
+    presupuesto_id al crear la cotizacion (ver presupuesto_cliente_service.py).
+    """
+    try:
+        ok, resp = _require_personal(request, allowed_areas=['ALMACEN', 'ADMINISTRACION', 'OBRAS', 'TRABAJO'])
+        if not ok:
+            return resp
+
+        ubi_res = (
+            supabase.table("ubicacion")
+            .select("cliente_id, direccion, referencia, latitud, longitud, fecha_creacion")
+            .eq("presupuesto_id", presupuesto_id)
+            .order("fecha_creacion", desc=True)
+            .limit(1)
+            .execute()
+        )
+        filas = getattr(ubi_res, "data", []) or []
+        if not filas or filas[0].get("latitud") is None or filas[0].get("longitud") is None:
+            return jsonify({"success": False, "message": "No hay ubicacion guardada para este servicio"}), 200
+
+        ubicacion = filas[0]
+        return jsonify({
+            "success": True,
+            "cliente_id": ubicacion.get("cliente_id"),
             "direccion": ubicacion.get("direccion"),
             "referencia": ubicacion.get("referencia"),
             "latitud": float(ubicacion.get("latitud")),

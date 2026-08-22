@@ -55,7 +55,7 @@ def obtener_servicios_de_notificacion(notificacion_id: str):
             items = []
             for pid in presupuesto_ids:
                 pres_r = supabase.table('presupuesto').select(
-                    'id_presupuesto, descripcion, total, ancho, alto, servicio_id, '
+                    'id_presupuesto, descripcion, total, ancho, alto, servicio_id, fecha_remetro, '
                     'servicio(id_servicio, nombre, descripcion, ING)'
                 ).eq('id_presupuesto', pid).limit(1).execute()
                 if pres_r.data:
@@ -83,6 +83,7 @@ def obtener_servicios_de_notificacion(notificacion_id: str):
                         'alto':              p.get('alto'),
                         'total':             p.get('total'),
                         'imagen_url':        img_url,
+                        'fecha_remetro':     p.get('fecha_remetro'),
                     })
 
             meta_out = {
