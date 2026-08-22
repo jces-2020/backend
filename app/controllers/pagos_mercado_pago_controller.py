@@ -745,7 +745,8 @@ def procesar_pago():
                 "payment_id": resultado.get("payment_id"),
                 "status": resultado.get("status"),
                 "status_detail": resultado.get("status_detail"),
-                "amount": resultado.get("amount")
+                "amount": resultado.get("amount"),
+                "payment_method_id": payment_method_id
             }), 200
 
 
