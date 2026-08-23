@@ -57,7 +57,13 @@ def etl_table_preview(table_name):
 
 @etl_proxy_bp.route('/api/etl/tables/<string:table_name>/export', methods=['GET'])
 def etl_table_export(table_name):
-    return _forward('GET', f'/api/etl/tables/{table_name}/export')
+    qs = request.query_string.decode('utf-8')
+    return _forward('GET', f'/api/etl/tables/{table_name}/export' + (f'?{qs}' if qs else ''))
+
+
+@etl_proxy_bp.route('/api/etl/tables/export-batch', methods=['POST'])
+def etl_tables_export_batch():
+    return _forward('POST', '/api/etl/tables/export-batch', json=request.get_json())
 
 
 # ── Dashboard ────────────────────────────────────────────────────
