@@ -6,58 +6,17 @@ from app.services.venta_detalle_service import (
     obtener_cliente_id_por_carrito,
     obtener_detalle_venta_por_carrito,
 )
+from app.controllers.tipo_personal_controller import verify_jwt
 import os, json, base64, hmac, hashlib, time, re, threading
 
 pedidos_detalle_api = Blueprint('pedidos_detalle_api', __name__)
 bp = pedidos_detalle_api  # alias para auto-registro del factory
-DEBUG_AUTH_LOGS = os.environ.get('DEBUG_AUTH_LOGS', '').strip().lower() in ('1', 'true', 'yes', 'si')
 
 # ─── IN-MEMORY LOCK (mecanismo primario anti-concurrencia) ────────────────────
 # Clave: notif_id  Valor: {"worker_id": str, "worker_name": str, "at": float}
 # Protegido por threading.Lock para garantizar atomicidad entre hilos.
 _notif_locks: dict = {}
 _notif_lock_mutex = threading.Lock()
-
-
-def _dbg(msg: str):
-    if DEBUG_AUTH_LOGS:
-        print(msg)
-
-# ─── JWT (HS256 sin dependencia externa) ───────────────────────────────────────
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
-
-def _b64url_decode(data: str) -> bytes:
-    rem = len(data) % 4
-    if rem:
-        data += '=' * (4 - rem)
-    return base64.urlsafe_b64decode(data)
-
-def verify_jwt(token: str):
-    try:
-        parts = token.split('.')
-        _dbg(f"[DEBUG verify_jwt] Token partes: {len(parts)}")
-        if len(parts) != 3:
-            return None
-        header  = json.loads(_b64url_decode(parts[0]).decode('utf-8'))
-        payload = json.loads(_b64url_decode(parts[1]).decode('utf-8'))
-        signature = parts[2]
-        if header.get('alg') != 'HS256':
-            return None
-        secret = os.environ.get('JWT_SECRET', 'devsecret-change-me')
-        signing_input = parts[0] + '.' + parts[1]
-        expected = hmac.new(secret.encode('utf-8'), signing_input.encode('utf-8'), hashlib.sha256).digest()
-        expected_b64 = _b64url(expected)
-        if not hmac.compare_digest(signature, expected_b64):
-            return None
-        if payload.get('exp') and int(payload['exp']) < int(time.time()):
-            return None
-        return payload
-    except Exception as e:
-        import traceback
-        _dbg(f"[DEBUG verify_jwt] Excepción: {e}\n{traceback.format_exc()}")
-        return None
 
 
 def _require_personal(request, allowed_areas=None):
