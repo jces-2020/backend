@@ -29,11 +29,31 @@ SERIE_MAX_LEN = 50
 CODIGO_PATTERN = re.compile(r'^[A-Za-z0-9._-]+$')
 FORMAS_VALIDAS = {'L', 'U', 'H', 'riel', 'otro'}
 
+# Número válido: admite 0 como valor, pero rechaza ceros redundantes a la
+# izquierda (ej. "000000", "007"). Sí admite decimales (ej. "0.5", "120.75").
+NUMERO_PATTERN = re.compile(r'^(0|[1-9]\d*)(\.\d+)?$')
+
 # Campos numéricos de detalle_producto (especificaciones técnicas): no admiten
 # valores negativos ni texto.
 DETALLE_NUMERIC_FIELDS = {
     'rebaje_mm', 'cara_visible_mm', 'canal_ancho_mm', 'barra_largo_cm',
     'tolerancia_mm', 'espesor_mm', 'plancha_ancho_cm', 'plancha_alto_cm',
+}
+
+# Ancho/alto de plancha (vidrio) y largo de barra (aluminio): mismo límite,
+# no pueden superar 5 metros.
+MEDIDA_LARGA_MAX_CM = 500
+CAMPOS_MEDIDA_LARGA = {'plancha_ancho_cm', 'plancha_alto_cm', 'barra_largo_cm'}
+
+ETIQUETAS_DETALLE = {
+    'rebaje_mm': 'El rebaje',
+    'cara_visible_mm': 'La cara visible',
+    'canal_ancho_mm': 'El canal ancho',
+    'barra_largo_cm': 'El largo de barra',
+    'tolerancia_mm': 'La tolerancia',
+    'espesor_mm': 'El espesor',
+    'plancha_ancho_cm': 'La plancha ancho',
+    'plancha_alto_cm': 'La plancha alto',
 }
 
 
@@ -45,6 +65,21 @@ def _extraer_detalle(data: Dict[str, Any]) -> Dict[str, Any]:
     return {k: data[k] for k in DETALLE_FIELDS if data.get(k) not in (None, '')}
 
 
+def _validar_numero_medida(
+    valor: Any, etiqueta: str, *, maximo: Optional[float] = None
+) -> Tuple[bool, Optional[str]]:
+    """Valida un número de medida (mm/cm): admite 0, rechaza signos negativos y
+    formatos con ceros redundantes (ej. "000000"), y opcionalmente un máximo.
+    """
+    texto = str(valor).strip()
+    if not NUMERO_PATTERN.match(texto):
+        return False, f"{etiqueta} tiene un formato inválido"
+    numero = float(texto)
+    if maximo is not None and numero > maximo:
+        return False, f"{etiqueta} no puede superar {maximo:g} cm (5 metros)"
+    return True, None
+
+
 def _validar_grosor(valor: Any) -> Tuple[bool, Optional[str]]:
     """El grosor se mide en milímetros: número desde 0, sin guiones ni texto."""
     if valor in (None, ''):
@@ -52,13 +87,7 @@ def _validar_grosor(valor: Any) -> Tuple[bool, Optional[str]]:
     texto = str(valor).strip()
     if not texto:
         return True, None
-    try:
-        numero = float(texto)
-    except (ValueError, TypeError):
-        return False, "El grosor debe ser un número en milímetros"
-    if numero < 0:
-        return False, "El grosor no puede ser negativo"
-    return True, None
+    return _validar_numero_medida(texto, "El grosor")
 
 
 def _validar_detalle_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
@@ -67,12 +96,10 @@ def _validar_detalle_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         valor = data.get(campo)
         if valor in (None, ''):
             continue
-        try:
-            numero = float(valor)
-        except (ValueError, TypeError):
-            return False, f"El campo {campo} debe ser un número válido"
-        if numero < 0:
-            return False, f"El campo {campo} no puede ser negativo"
+        maximo = MEDIDA_LARGA_MAX_CM if campo in CAMPOS_MEDIDA_LARGA else None
+        ok, mensaje = _validar_numero_medida(valor, ETIQUETAS_DETALLE.get(campo, campo), maximo=maximo)
+        if not ok:
+            return False, mensaje
 
     serie = data.get('serie')
     if serie not in (None, '') and len(str(serie).strip()) > SERIE_MAX_LEN:
