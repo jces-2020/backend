@@ -15,9 +15,26 @@ from werkzeug.utils import secure_filename
 import mimetypes
 import tempfile
 import os
+import re
 import unicodedata
 
 productos_flutter_bp = Blueprint('productos_flutter', __name__, url_prefix='/api/flutter/productos')
+
+# ── Reglas de validación de campos ──────────────────────────────────────────
+CODIGO_MAX_LEN = 50
+DESCRIPCION_MAX_LEN = 500
+SERIE_MAX_LEN = 50
+
+# Código de producto: letras, números, punto, guion y guion bajo (ej. "VT-001").
+CODIGO_PATTERN = re.compile(r'^[A-Za-z0-9._-]+$')
+FORMAS_VALIDAS = {'L', 'U', 'H', 'riel', 'otro'}
+
+# Campos numéricos de detalle_producto (especificaciones técnicas): no admiten
+# valores negativos ni texto.
+DETALLE_NUMERIC_FIELDS = {
+    'rebaje_mm', 'cara_visible_mm', 'canal_ancho_mm', 'barra_largo_cm',
+    'tolerancia_mm', 'espesor_mm', 'plancha_ancho_cm', 'plancha_alto_cm',
+}
 
 
 def _extraer_detalle(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -26,6 +43,46 @@ def _extraer_detalle(data: Dict[str, Any]) -> Dict[str, Any]:
     Mismos campos que usa el sitio web (ver producto_detalle_controller.DETALLE_FIELDS).
     """
     return {k: data[k] for k in DETALLE_FIELDS if data.get(k) not in (None, '')}
+
+
+def _validar_grosor(valor: Any) -> Tuple[bool, Optional[str]]:
+    """El grosor se mide en milímetros: número desde 0, sin guiones ni texto."""
+    if valor in (None, ''):
+        return True, None
+    texto = str(valor).strip()
+    if not texto:
+        return True, None
+    try:
+        numero = float(texto)
+    except (ValueError, TypeError):
+        return False, "El grosor debe ser un número en milímetros"
+    if numero < 0:
+        return False, "El grosor no puede ser negativo"
+    return True, None
+
+
+def _validar_detalle_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """Valida las especificaciones técnicas (detalle_producto) si vinieron en el payload."""
+    for campo in DETALLE_NUMERIC_FIELDS:
+        valor = data.get(campo)
+        if valor in (None, ''):
+            continue
+        try:
+            numero = float(valor)
+        except (ValueError, TypeError):
+            return False, f"El campo {campo} debe ser un número válido"
+        if numero < 0:
+            return False, f"El campo {campo} no puede ser negativo"
+
+    serie = data.get('serie')
+    if serie not in (None, '') and len(str(serie).strip()) > SERIE_MAX_LEN:
+        return False, f"La serie no puede superar {SERIE_MAX_LEN} caracteres"
+
+    forma = data.get('forma')
+    if forma not in (None, '') and str(forma) not in FORMAS_VALIDAS:
+        return False, "Forma inválida"
+
+    return True, None
 
 
 def _env_enabled(name: str, default: str = '1') -> bool:
@@ -97,21 +154,96 @@ def _validar_producto_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     Returns:
         Tupla (es_valido, mensaje_error)
     """
-    campos_requeridos = ['codigo', 'nombre', 'cantidad', 'precio_unitario', 'categoria_id']
-    
-    for campo in campos_requeridos:
-        if not data.get(campo):
-            return False, f"Campo requerido faltante: {campo}"
-    
+    nombre = str(data.get('nombre') or '').strip()
+    if not nombre:
+        return False, "El nombre es obligatorio"
+
+    codigo = str(data.get('codigo') or '').strip()
+    if not codigo:
+        return False, "El código es obligatorio"
+    if len(codigo) > CODIGO_MAX_LEN:
+        return False, f"El código no puede superar {CODIGO_MAX_LEN} caracteres"
+    if not CODIGO_PATTERN.match(codigo):
+        return False, "El código solo puede contener letras, números, puntos, guiones y guiones bajos"
+
+    if not str(data.get('categoria_id') or '').strip():
+        return False, "Selecciona una categoría"
+
     # Validar tipos de datos
     try:
         cantidad = float(data.get('cantidad', 0))
         precio = float(data.get('precio_unitario', 0))
-        if cantidad < 0 or precio < 0:
-            return False, "Cantidad y precio deben ser valores positivos"
     except (ValueError, TypeError):
         return False, "Cantidad y precio deben ser números válidos"
-    
+
+    if cantidad < 1:
+        return False, "La cantidad debe ser mayor o igual a 1"
+    if precio <= 0:
+        return False, "El precio debe ser mayor a 0"
+
+    ok, mensaje = _validar_grosor(data.get('grosor'))
+    if not ok:
+        return False, mensaje
+
+    descripcion = data.get('descripcion')
+    if descripcion not in (None, '') and len(str(descripcion)) > DESCRIPCION_MAX_LEN:
+        return False, f"La descripción no puede superar {DESCRIPCION_MAX_LEN} caracteres"
+
+    ok, mensaje = _validar_detalle_data(data)
+    if not ok:
+        return False, mensaje
+
+    return True, None
+
+
+def _validar_actualizacion_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """Valida los campos presentes en una actualización parcial de producto.
+
+    A diferencia de `_validar_producto_data`, aquí ningún campo es obligatorio
+    (es una edición parcial): solo se valida lo que efectivamente vino en el payload.
+    """
+    if 'nombre' in data and data['nombre'] not in (None, ''):
+        nombre = str(data['nombre']).strip()
+        if not nombre:
+            return False, "El nombre no puede quedar vacío"
+
+    if 'codigo' in data and data['codigo'] not in (None, ''):
+        codigo = str(data['codigo']).strip()
+        if not codigo:
+            return False, "El código no puede quedar vacío"
+        if len(codigo) > CODIGO_MAX_LEN:
+            return False, f"El código no puede superar {CODIGO_MAX_LEN} caracteres"
+        if not CODIGO_PATTERN.match(codigo):
+            return False, "El código solo puede contener letras, números, puntos, guiones y guiones bajos"
+
+    if 'cantidad' in data and data['cantidad'] not in (None, ''):
+        try:
+            cantidad = float(data['cantidad'])
+        except (ValueError, TypeError):
+            return False, "La cantidad debe ser un número válido"
+        if cantidad < 0:
+            return False, "La cantidad no puede ser negativa"
+
+    if 'precio_unitario' in data and data['precio_unitario'] not in (None, ''):
+        try:
+            precio = float(data['precio_unitario'])
+        except (ValueError, TypeError):
+            return False, "El precio debe ser un número válido"
+        if precio <= 0:
+            return False, "El precio debe ser mayor a 0"
+
+    ok, mensaje = _validar_grosor(data.get('grosor'))
+    if not ok:
+        return False, mensaje
+
+    descripcion = data.get('descripcion')
+    if descripcion not in (None, '') and len(str(descripcion)) > DESCRIPCION_MAX_LEN:
+        return False, f"La descripción no puede superar {DESCRIPCION_MAX_LEN} caracteres"
+
+    ok, mensaje = _validar_detalle_data(data)
+    if not ok:
+        return False, mensaje
+
     return True, None
 
 
@@ -379,12 +511,12 @@ def registrar_producto():
         
         # Preparar payload para insertar producto
         payload = {
-            'codigo': data.get('codigo').strip(),
-            'nombre': data.get('nombre').strip(),
+            'codigo': str(data.get('codigo') or '').strip(),
+            'nombre': str(data.get('nombre') or '').strip(),
             'cantidad': int(float(data.get('cantidad', 0))),
             'precio_unitario': float(data.get('precio_unitario', 0)),
-            'descripcion': data.get('descripcion', '').strip() or None,
-            'grosor': data.get('grosor', '').strip() or None,
+            'descripcion': str(data.get('descripcion') or '').strip() or None,
+            'grosor': str(data.get('grosor') or '').strip() or None,
             'categoria_id': data.get('categoria_id'),
             'almacen_id': almacen_id,
             'stock_id': data.get('stock_id') or None,
@@ -537,31 +669,38 @@ def registrar_por_pasos():
             
             # Preparar payload
             payload = {
-                'codigo': data.get('codigo').strip(),
-                'nombre': data.get('nombre').strip(),
+                'codigo': str(data.get('codigo') or '').strip(),
+                'nombre': str(data.get('nombre') or '').strip(),
                 'cantidad': int(float(data.get('cantidad', 0))),
                 'precio_unitario': float(data.get('precio_unitario', 0)),
-                'descripcion': data.get('descripcion', '').strip() or None,
-                'grosor': data.get('grosor', '').strip() or None,
+                'descripcion': str(data.get('descripcion') or '').strip() or None,
+                'grosor': str(data.get('grosor') or '').strip() or None,
                 'categoria_id': data.get('categoria_id'),
                 'almacen_id': almacen_id,
                 'stock_id': data.get('stock_id') or None,
                 'IMG_P': data.get('IMG_P'),  # URL subida en paso 1
             }
-            
+
             # Insertar producto
             resp = supabase.table('productos').insert(payload).execute()
             err = getattr(resp, 'error', None) if resp is not None else None
             data_resp = getattr(resp, 'data', None) if resp is not None else None
-            
+
             if err:
                 return jsonify({
                     "success": False,
                     "paso": 2,
                     "message": f"Error al guardar producto: {str(err)}"
                 }), 500
-            
+
             producto = data_resp[0] if isinstance(data_resp, list) and len(data_resp) > 0 else data_resp
+
+            # Guardar especificaciones técnicas (detalle_producto), si vinieron en el payload
+            detalle_payload = _extraer_detalle(data)
+            if detalle_payload and producto.get('id_producto'):
+                detalle_guardado = _upsert_detalle_producto(producto['id_producto'], detalle_payload)
+                if detalle_guardado:
+                    producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
 
             # Notificar por Pusher (si no hay configuracion, solo omite sin romper flujo)
             notificar_nuevo_producto(
@@ -791,13 +930,21 @@ def actualizar_producto(producto_id: str):
                 "message": "No hay datos para actualizar"
             }), 400
 
+        # Validar los campos que vinieron en el payload
+        es_valido, error_msg = _validar_actualizacion_data(data)
+        if not es_valido:
+            return jsonify({
+                "success": False,
+                "message": error_msg
+            }), 400
+
         # Obtener datos anteriores del producto
         resp_anterior = supabase.table('productos').select('*').eq('id_producto', producto_id).single().execute()
         datos_anteriores = getattr(resp_anterior, 'data', None) if resp_anterior is not None else None
 
         # Limpiar datos para actualizar
         payload = {}
-        campos_permitidos = ['nombre', 'cantidad', 'precio_unitario', 'descripcion',
+        campos_permitidos = ['nombre', 'codigo', 'cantidad', 'precio_unitario', 'descripcion',
                            'grosor', 'categoria_id', 'stock_id', 'IMG_P']
 
         for campo in campos_permitidos:
@@ -806,6 +953,8 @@ def actualizar_producto(producto_id: str):
                     payload[campo] = int(float(data[campo]))
                 elif campo in ['precio_unitario']:
                     payload[campo] = float(data[campo])
+                elif campo in ['nombre', 'codigo', 'descripcion', 'grosor']:
+                    payload[campo] = str(data[campo]).strip()
                 else:
                     payload[campo] = data[campo]
 
