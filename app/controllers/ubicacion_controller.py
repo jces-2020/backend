@@ -18,6 +18,7 @@ from app.services.venta_detalle_service import obtener_cliente_id_por_carrito
 ubicacion_bp = Blueprint('ubicacion', __name__, url_prefix='/api')
 
 GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+GOOGLE_DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 
 
 @ubicacion_bp.route('/reverse-geocode', methods=['POST'])
@@ -53,6 +54,53 @@ def reverse_geocode():
             "success": True,
             "direccion": primero.get("formatted_address", ""),
             "place_id": primero.get("place_id"),
+        }), 200
+
+    except requests.RequestException as e:
+        return jsonify({"success": False, "message": str(e)}), 502
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@ubicacion_bp.route('/directions', methods=['GET'])
+def obtener_direcciones():
+    """Ruta (polyline) entre dos puntos vía Directions API de Google.
+
+    Se llama desde el backend (no directo desde el navegador/app) porque la
+    API REST de Directions no admite CORS para requests desde el cliente.
+    Query params: origen_lat, origen_lng, destino_lat, destino_lng.
+    """
+    try:
+        origen_lat = request.args.get('origen_lat')
+        origen_lng = request.args.get('origen_lng')
+        destino_lat = request.args.get('destino_lat')
+        destino_lng = request.args.get('destino_lng')
+
+        if not all([origen_lat, origen_lng, destino_lat, destino_lng]):
+            return jsonify({"success": False, "message": "origen y destino son requeridos"}), 400
+
+        api_key = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+        if not api_key:
+            return jsonify({"success": False, "message": "GOOGLE_MAPS_API_KEY no configurada"}), 500
+
+        response = requests.get(GOOGLE_DIRECTIONS_URL, params={
+            "origin": f"{origen_lat},{origen_lng}",
+            "destination": f"{destino_lat},{destino_lng}",
+            "key": api_key,
+        }, timeout=10)
+        data = response.json()
+
+        if data.get("status") != "OK" or not data.get("routes"):
+            return jsonify({"success": False, "message": data.get("status", "Sin ruta")}), 200
+
+        ruta = data["routes"][0]
+        leg = (ruta.get("legs") or [{}])[0]
+
+        return jsonify({
+            "success": True,
+            "polyline": ruta.get("overview_polyline", {}).get("points", ""),
+            "distancia_texto": leg.get("distance", {}).get("text"),
+            "duracion_texto": leg.get("duration", {}).get("text"),
         }), 200
 
     except requests.RequestException as e:
