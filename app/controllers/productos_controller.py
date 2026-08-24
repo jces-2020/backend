@@ -213,7 +213,22 @@ def eliminar_producto(id_producto):
         # borrar esa fila primero o Postgres rechaza el DELETE de productos.
         supabase.table('detalle_producto').delete().eq('producto_id', id_producto).execute()
 
-        resp = supabase.table('productos').delete().eq('id_producto', id_producto).execute()
+        try:
+            resp = supabase.table('productos').delete().eq('id_producto', id_producto).execute()
+        except Exception as delete_err:
+            msg = str(delete_err)
+            if 'foreign key constraint' in msg.lower() or 'violates foreign key' in msg.lower():
+                ventas = supabase.table('venta').select('id_venta').eq('producto_id', id_producto).limit(1).execute()
+                if ventas.data:
+                    return jsonify({
+                        'error': 'No se puede eliminar: el producto tiene ventas registradas. '
+                                 'Pon la cantidad en 0 en lugar de eliminarlo si ya no se debe vender.'
+                    }), 409
+                return jsonify({
+                    'error': 'No se puede eliminar: el producto está siendo usado en otro registro del sistema.'
+                }), 409
+            raise
+
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
         return jsonify({'success': True, 'message': 'Producto eliminado'}), 200
