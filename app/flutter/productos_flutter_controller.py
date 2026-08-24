@@ -45,6 +45,11 @@ DETALLE_NUMERIC_FIELDS = {
 MEDIDA_LARGA_MAX_CM = 500
 CAMPOS_MEDIDA_LARGA = {'plancha_ancho_cm', 'plancha_alto_cm', 'barra_largo_cm'}
 
+# El resto de campos de detalle_producto (y grosor) se guardan en columnas
+# numeric(6,2): el máximo absoluto que aceptan es 9999.99. Validar esto antes
+# de insertar evita el error crudo de Postgres ("numeric field overflow").
+MEDIDA_CORTA_MAX = 9999.99
+
 ETIQUETAS_DETALLE = {
     'rebaje_mm': 'El rebaje',
     'cara_visible_mm': 'La cara visible',
@@ -66,7 +71,11 @@ def _extraer_detalle(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _validar_numero_medida(
-    valor: Any, etiqueta: str, *, maximo: Optional[float] = None
+    valor: Any,
+    etiqueta: str,
+    *,
+    maximo: Optional[float] = None,
+    maximo_desc: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Valida un número de medida (mm/cm): admite 0, rechaza signos negativos y
     formatos con ceros redundantes (ej. "000000"), y opcionalmente un máximo.
@@ -76,7 +85,8 @@ def _validar_numero_medida(
         return False, f"{etiqueta} tiene un formato inválido"
     numero = float(texto)
     if maximo is not None and numero > maximo:
-        return False, f"{etiqueta} no puede superar {maximo:g} cm (5 metros)"
+        detalle = f" ({maximo_desc})" if maximo_desc else ""
+        return False, f"{etiqueta} no puede superar {maximo:g}{detalle}"
     return True, None
 
 
@@ -87,7 +97,7 @@ def _validar_grosor(valor: Any) -> Tuple[bool, Optional[str]]:
     texto = str(valor).strip()
     if not texto:
         return True, None
-    return _validar_numero_medida(texto, "El grosor")
+    return _validar_numero_medida(texto, "El grosor", maximo=MEDIDA_CORTA_MAX)
 
 
 def _validar_detalle_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
@@ -96,8 +106,13 @@ def _validar_detalle_data(data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         valor = data.get(campo)
         if valor in (None, ''):
             continue
-        maximo = MEDIDA_LARGA_MAX_CM if campo in CAMPOS_MEDIDA_LARGA else None
-        ok, mensaje = _validar_numero_medida(valor, ETIQUETAS_DETALLE.get(campo, campo), maximo=maximo)
+        if campo in CAMPOS_MEDIDA_LARGA:
+            maximo, maximo_desc = MEDIDA_LARGA_MAX_CM, "5 metros"
+        else:
+            maximo, maximo_desc = MEDIDA_CORTA_MAX, None
+        ok, mensaje = _validar_numero_medida(
+            valor, ETIQUETAS_DETALLE.get(campo, campo), maximo=maximo, maximo_desc=maximo_desc
+        )
         if not ok:
             return False, mensaje
 
@@ -570,12 +585,24 @@ def registrar_producto():
         # Retornar producto registrado
         producto = data_resp[0] if isinstance(data_resp, list) and len(data_resp) > 0 else data_resp
 
-        # Guardar especificaciones técnicas (detalle_producto), si vinieron en el payload
+        # Guardar especificaciones técnicas (detalle_producto), si vinieron en el payload.
+        # Si falla, se revierte el producto recién creado para no dejar un registro
+        # huérfano (sin especificaciones) que además bloquee el código para reintentar.
         detalle_payload = _extraer_detalle(data)
         if detalle_payload and producto.get('id_producto'):
-            detalle_guardado = _upsert_detalle_producto(producto['id_producto'], detalle_payload)
-            if detalle_guardado:
-                producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
+            try:
+                detalle_guardado = _upsert_detalle_producto(producto['id_producto'], detalle_payload)
+                if detalle_guardado:
+                    producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
+            except Exception as e:
+                try:
+                    supabase.table('productos').delete().eq('id_producto', producto['id_producto']).execute()
+                except Exception:
+                    pass
+                return jsonify({
+                    "success": False,
+                    "message": f"Error al guardar especificaciones técnicas: {str(e)}"
+                }), 500
 
         # Registrar en reportes
         registrar_creacion_producto(producto.get('id_producto'), producto)
@@ -728,12 +755,24 @@ def registrar_por_pasos():
 
             producto = data_resp[0] if isinstance(data_resp, list) and len(data_resp) > 0 else data_resp
 
-            # Guardar especificaciones técnicas (detalle_producto), si vinieron en el payload
+            # Guardar especificaciones técnicas (detalle_producto), si vinieron en el payload.
+            # Si falla, se revierte el producto recién creado (ver misma lógica en /registrar).
             detalle_payload = _extraer_detalle(data)
             if detalle_payload and producto.get('id_producto'):
-                detalle_guardado = _upsert_detalle_producto(producto['id_producto'], detalle_payload)
-                if detalle_guardado:
-                    producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
+                try:
+                    detalle_guardado = _upsert_detalle_producto(producto['id_producto'], detalle_payload)
+                    if detalle_guardado:
+                        producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
+                except Exception as e:
+                    try:
+                        supabase.table('productos').delete().eq('id_producto', producto['id_producto']).execute()
+                    except Exception:
+                        pass
+                    return jsonify({
+                        "success": False,
+                        "paso": 2,
+                        "message": f"Error al guardar especificaciones técnicas: {str(e)}"
+                    }), 500
 
             # Notificar por Pusher (si no hay configuracion, solo omite sin romper flujo)
             notificar_nuevo_producto(
