@@ -1030,6 +1030,11 @@ def actualizar_producto(producto_id: str):
                 else:
                     payload[campo] = data[campo]
 
+        # Ubicación en almacén (fila/columna): si vino alguna, crea un nuevo
+        # registro en 'almacen' y actualiza la referencia del producto.
+        if data.get('fila') or data.get('columna'):
+            payload['almacen_id'] = _crear_almacen(data.get('fila'), data.get('columna'))
+
         # Especificaciones técnicas (detalle_producto), si vinieron en el payload
         detalle_payload = _extraer_detalle(data)
 
@@ -1110,11 +1115,22 @@ def eliminar_producto(producto_id: str):
         
         # Registrar eliminación en reportes (antes de eliminar)
         registrar_eliminacion_producto(producto_id, existe_data)
-        
+
+        # Eliminar primero las especificaciones técnicas: detalle_producto
+        # referencia a productos por llave foránea, así que si queda una fila
+        # ahí, Postgres rechaza el DELETE de productos (FK violation).
+        try:
+            supabase.table('detalle_producto').delete().eq('producto_id', producto_id).execute()
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "message": f"Error al eliminar especificaciones técnicas: {str(e)}"
+            }), 500
+
         # Eliminar
         resp = supabase.table('productos').delete().eq('id_producto', producto_id).execute()
         err = getattr(resp, 'error', None) if resp is not None else None
-        
+
         if err:
             return jsonify({
                 "success": False,
