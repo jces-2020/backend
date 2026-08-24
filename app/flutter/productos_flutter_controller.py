@@ -1145,9 +1145,9 @@ def eliminar_producto(producto_id: str):
     }
 
     Si el producto tiene ventas registradas (tabla 'venta' lo referencia por
-    llave foránea), se desvinculan (producto_id a null) antes de eliminar,
-    para no perder el registro de la venta/monto pero sí poder borrar el
-    producto.
+    llave foránea), no se elimina: responde 409 con un mensaje claro. Un
+    trigger en 'venta' exige producto_id no nulo en ventas de tipo producto,
+    así que no se puede desvincular la venta para permitir el borrado.
     """
     try:
         # Verificar que existe y obtener sus datos
@@ -1182,17 +1182,20 @@ def eliminar_producto(producto_id: str):
             if 'foreign key constraint' not in msg.lower() and 'violates foreign key' not in msg.lower():
                 raise
 
-            # El producto tiene ventas historicas: se desvinculan (producto_id a
-            # null) en vez de bloquear el borrado, para no perder el registro de
-            # la venta/monto pero sí poder eliminar el producto.
-            supabase.table('venta').update({'producto_id': None}).eq('producto_id', producto_id).execute()
-            try:
-                resp = supabase.table('productos').delete().eq('id_producto', producto_id).execute()
-            except Exception:
+            # No se puede desvincular: un trigger en 'venta' exige que toda
+            # venta de tipo producto tenga producto_id (no permite null), así
+            # que un producto con ventas reales no se puede eliminar sin
+            # perder ese historial. Se bloquea con mensaje claro.
+            ventas = supabase.table('venta').select('id_venta').eq('producto_id', producto_id).limit(1).execute()
+            if ventas.data:
                 return jsonify({
                     "success": False,
-                    "message": "No se puede eliminar: el producto está siendo usado en otro registro del sistema."
+                    "message": "No se puede eliminar: este producto tiene ventas registradas asociadas."
                 }), 409
+            return jsonify({
+                "success": False,
+                "message": "No se puede eliminar: el producto está siendo usado en otro registro del sistema."
+            }), 409
 
         err = getattr(resp, 'error', None) if resp is not None else None
 
