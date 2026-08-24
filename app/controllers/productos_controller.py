@@ -5,6 +5,11 @@ Gestiona: listado, creación, actualización, eliminación y búsquedas.
 """
 from flask import Blueprint, request, jsonify
 from app.services.supabase_client import supabase
+from app.services.reportes_productos_service import (
+    registrar_creacion_producto,
+    registrar_edicion_producto,
+    registrar_eliminacion_producto,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -126,6 +131,11 @@ def crear_producto():
 
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
+
+        producto_creado = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
+        if isinstance(producto_creado, dict) and producto_creado.get('id_producto'):
+            registrar_creacion_producto(producto_creado['id_producto'], producto_creado)
+
         return jsonify({'success': True, 'data': resp.data}), 201
     except Exception as e:
         logger.error(f"Error en crear_producto: {e}", exc_info=True)
@@ -177,6 +187,11 @@ def actualizar_producto(id_producto):
         resp = supabase.table('productos').update(payload).eq('id_producto', id_producto).execute()
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
+
+        producto_actualizado = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
+        if isinstance(producto_actualizado, dict):
+            registrar_edicion_producto(id_producto, curr, producto_actualizado)
+
         return jsonify({'success': True, 'data': resp.data}), 200
     except Exception as e:
         logger.error(f"Error en actualizar_producto: {e}", exc_info=True)
@@ -186,9 +201,17 @@ def actualizar_producto(id_producto):
 @productos_bp.route('/<id_producto>', methods=['DELETE'])
 def eliminar_producto(id_producto):
     try:
-        curr_resp = supabase.table('productos').select('IMG_P').eq('id_producto', id_producto).single().execute()
-        if curr_resp.data and curr_resp.data.get('IMG_P'):
-            _delete_storage_image(curr_resp.data['IMG_P'])
+        curr_resp = supabase.table('productos').select('*').eq('id_producto', id_producto).single().execute()
+        curr = curr_resp.data
+        if curr and curr.get('IMG_P'):
+            _delete_storage_image(curr['IMG_P'])
+
+        if curr:
+            registrar_eliminacion_producto(id_producto, curr)
+
+        # detalle_producto referencia a productos por llave foránea: hay que
+        # borrar esa fila primero o Postgres rechaza el DELETE de productos.
+        supabase.table('detalle_producto').delete().eq('producto_id', id_producto).execute()
 
         resp = supabase.table('productos').delete().eq('id_producto', id_producto).execute()
         if getattr(resp, 'error', None):

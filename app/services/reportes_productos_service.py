@@ -63,6 +63,22 @@ def registrar_eliminacion_producto(producto_id: str, datos_anteriores: Dict[str,
         return False
 
 
+def _enriquecer_reporte(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Agrega nombre/código del producto como campos planos.
+
+    En la tabla, el nombre/código solo existen anidados dentro de
+    'datos_nuevos' (CREAR/EDITAR) o 'datos_anteriores' (ELIMINAR), no como
+    columnas propias. Los clientes (app móvil) esperan un campo plano.
+    """
+    datos = row.get('datos_nuevos') or row.get('datos_anteriores') or {}
+    if not isinstance(datos, dict):
+        datos = {}
+    row['id'] = row.get('id_reporte')
+    row['producto_nombre'] = datos.get('nombre')
+    row['producto_codigo'] = datos.get('codigo')
+    return row
+
+
 def obtener_reportes(limite: int = 100, offset: int = 0, tipo: Optional[str] = None, producto_id: Optional[str] = None) -> List[Dict[str, Any]]:
     try:
         query = supabase.table('reportes_productos').select('*')
@@ -74,7 +90,7 @@ def obtener_reportes(limite: int = 100, offset: int = 0, tipo: Optional[str] = N
         query = query.order('fecha_cambio', desc=True).range(offset, offset + limite - 1)
         resp = query.execute()
         data = getattr(resp, 'data', []) or []
-        return data
+        return [_enriquecer_reporte(row) for row in data]
     except Exception as e:
         print(f"[reportes_productos_service] obtener_reportes: {e}")
         return []
