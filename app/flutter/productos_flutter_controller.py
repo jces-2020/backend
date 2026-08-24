@@ -503,12 +503,18 @@ def registrar_producto():
                 "success": False,
                 "message": error_msg
             }), 400
-        
+
+        if not img_url:
+            return jsonify({
+                "success": False,
+                "message": "La imagen del producto es obligatoria"
+            }), 400
+
         # Crear registro en almacén si es necesario
         almacen_id = None
         if data.get('fila') or data.get('columna'):
             almacen_id = _crear_almacen(data.get('fila'), data.get('columna'))
-        
+
         # Preparar payload para insertar producto
         payload = {
             'codigo': str(data.get('codigo') or '').strip(),
