@@ -10,6 +10,7 @@ from app.services.reportes_productos_service import (
     obtener_resumen_reportes
 )
 from app.services.pusher_service import notificar_nuevo_producto
+from app.controllers.producto_detalle_controller import DETALLE_FIELDS, _upsert_detalle_producto
 from werkzeug.utils import secure_filename
 import mimetypes
 import tempfile
@@ -17,6 +18,14 @@ import os
 import unicodedata
 
 productos_flutter_bp = Blueprint('productos_flutter', __name__, url_prefix='/api/flutter/productos')
+
+
+def _extraer_detalle(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extrae del payload los campos de especificaciones técnicas (detalle_producto).
+
+    Mismos campos que usa el sitio web (ver producto_detalle_controller.DETALLE_FIELDS).
+    """
+    return {k: data[k] for k in DETALLE_FIELDS if data.get(k) not in (None, '')}
 
 
 def _env_enabled(name: str, default: str = '1') -> bool:
@@ -395,7 +404,14 @@ def registrar_producto():
         
         # Retornar producto registrado
         producto = data_resp[0] if isinstance(data_resp, list) and len(data_resp) > 0 else data_resp
-        
+
+        # Guardar especificaciones técnicas (detalle_producto), si vinieron en el payload
+        detalle_payload = _extraer_detalle(data)
+        if detalle_payload and producto.get('id_producto'):
+            detalle_guardado = _upsert_detalle_producto(producto['id_producto'], detalle_payload)
+            if detalle_guardado:
+                producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
+
         # Registrar en reportes
         registrar_creacion_producto(producto.get('id_producto'), producto)
 
@@ -692,12 +708,41 @@ def obtener_producto(producto_id: str):
                 "success": False,
                 "message": "Producto no encontrado"
             }), 404
-        
+
+        detalle_resp = supabase.table('detalle_producto').select('*').eq('producto_id', producto_id).limit(1).execute()
+        detalle_data = getattr(detalle_resp, 'data', None) or []
+        if detalle_data:
+            data['detalle'] = detalle_data[0]
+
         return jsonify({
             "success": True,
             "data": data
         }), 200
-        
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Error interno: {str(e)}"
+        }), 500
+
+
+@productos_flutter_bp.route('/<producto_id>/detalle', methods=['GET'])
+def obtener_detalle_producto_flutter(producto_id: str):
+    """Obtiene las especificaciones técnicas (detalle_producto) de un producto.
+
+    Respuesta:
+    {
+        "success": true,
+        "data": { ...campos de detalle_producto... } | null
+    }
+    """
+    try:
+        resp = supabase.table('detalle_producto').select('*').eq('producto_id', producto_id).limit(1).execute()
+        data = getattr(resp, 'data', None) or []
+        return jsonify({
+            "success": True,
+            "data": data[0] if data else None
+        }), 200
     except Exception as e:
         return jsonify({
             "success": False,
@@ -724,66 +769,96 @@ def actualizar_producto(producto_id: str):
     }
     """
     try:
-        data = request.get_json() or {}
-        
+        # Detectar si es multipart (con archivo nuevo) o JSON
+        if 'file' in request.files or request.content_type == 'multipart/form-data':
+            data = request.form.to_dict()
+            if 'file' in request.files:
+                file = request.files['file']
+                imagen_categoria = request.form.get('imagen_categoria', 'productos') or 'productos'
+                success, url, error = _subir_imagen_a_storage(file, imagen_categoria)
+                if not success:
+                    return jsonify({
+                        "success": False,
+                        "message": f"Error al subir imagen: {error}"
+                    }), 400
+                data['IMG_P'] = url
+        else:
+            data = request.get_json() or {}
+
         if not data:
             return jsonify({
                 "success": False,
                 "message": "No hay datos para actualizar"
             }), 400
-        
+
         # Obtener datos anteriores del producto
         resp_anterior = supabase.table('productos').select('*').eq('id_producto', producto_id).single().execute()
         datos_anteriores = getattr(resp_anterior, 'data', None) if resp_anterior is not None else None
-        
+
         # Limpiar datos para actualizar
         payload = {}
-        campos_permitidos = ['nombre', 'cantidad', 'precio_unitario', 'descripcion', 
+        campos_permitidos = ['nombre', 'cantidad', 'precio_unitario', 'descripcion',
                            'grosor', 'categoria_id', 'stock_id', 'IMG_P']
-        
+
         for campo in campos_permitidos:
-            if campo in data and data[campo] is not None:
+            if campo in data and data[campo] not in (None, ''):
                 if campo in ['cantidad']:
                     payload[campo] = int(float(data[campo]))
                 elif campo in ['precio_unitario']:
                     payload[campo] = float(data[campo])
                 else:
                     payload[campo] = data[campo]
-        
-        if not payload:
+
+        # Especificaciones técnicas (detalle_producto), si vinieron en el payload
+        detalle_payload = _extraer_detalle(data)
+
+        if not payload and not detalle_payload:
             return jsonify({
                 "success": False,
                 "message": "No hay campos válidos para actualizar"
             }), 400
-        
-        # Actualizar en Supabase
-        resp = supabase.table('productos').update(payload).eq('id_producto', producto_id).execute()
-        err = getattr(resp, 'error', None) if resp is not None else None
-        data_resp = getattr(resp, 'data', None) if resp is not None else None
-        
-        if err:
-            return jsonify({
-                "success": False,
-                "message": f"Error al actualizar: {str(err)}"
-            }), 500
-        
-        if not data_resp or (isinstance(data_resp, list) and len(data_resp) == 0):
-            return jsonify({
-                "success": False,
-                "message": "Producto no encontrado"
-            }), 404
-        
-        producto = data_resp[0] if isinstance(data_resp, list) else data_resp
-        
+
+        if payload:
+            # Actualizar en Supabase
+            resp = supabase.table('productos').update(payload).eq('id_producto', producto_id).execute()
+            err = getattr(resp, 'error', None) if resp is not None else None
+            data_resp = getattr(resp, 'data', None) if resp is not None else None
+
+            if err:
+                return jsonify({
+                    "success": False,
+                    "message": f"Error al actualizar: {str(err)}"
+                }), 500
+
+            if not data_resp or (isinstance(data_resp, list) and len(data_resp) == 0):
+                return jsonify({
+                    "success": False,
+                    "message": "Producto no encontrado"
+                }), 404
+
+            producto = data_resp[0] if isinstance(data_resp, list) else data_resp
+        else:
+            if not datos_anteriores:
+                return jsonify({
+                    "success": False,
+                    "message": "Producto no encontrado"
+                }), 404
+            producto = datos_anteriores
+
+        if detalle_payload:
+            detalle_guardado = _upsert_detalle_producto(producto_id, detalle_payload)
+            if detalle_guardado:
+                producto['detalle'] = detalle_guardado[0] if isinstance(detalle_guardado, list) else detalle_guardado
+
         # Registrar edición en reportes usando datos completos retornados por la DB
         registrar_edicion_producto(producto_id, datos_anteriores, producto)
-        
+
         return jsonify({
             "success": True,
             "data": producto,
             "message": "Producto actualizado exitosamente"
         }), 200
-        
+
     except Exception as e:
         return jsonify({
             "success": False,
