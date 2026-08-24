@@ -29,6 +29,36 @@ def _obtener_nombre_cliente(id_cliente: str) -> Optional[str]:
         return None
 
 
+def _enriquecer_con_estado(notificaciones: List[Dict[str, Any]]) -> None:
+    """Agrega `estado_nombre` (descripción legible) a cada notificación,
+    resolviendo todos los estados en una sola consulta para evitar N+1."""
+    estado_ids = {
+        n.get('estado_notificacion_id')
+        for n in notificaciones
+        if n.get('estado_notificacion_id')
+    }
+    if not estado_ids:
+        for n in notificaciones:
+            n['estado_nombre'] = None
+        return
+
+    estados_map: Dict[str, str] = {}
+    try:
+        resp = (
+            supabase.table('estado_notificacion')
+            .select('id_estado, descripcion')
+            .in_('id_estado', list(estado_ids))
+            .execute()
+        )
+        for row in (getattr(resp, 'data', None) or []):
+            estados_map[row.get('id_estado')] = row.get('descripcion')
+    except Exception as e:
+        print(f"[notificacion_service] Error obteniendo estados: {e}")
+
+    for n in notificaciones:
+        n['estado_nombre'] = estados_map.get(n.get('estado_notificacion_id'))
+
+
 def _obtener_nombre_estado(estado_id: str) -> Optional[str]:
     """Obtiene la descripción del estado de notificación."""
     try:
@@ -195,14 +225,16 @@ def obtener_notificaciones(
 
         resp = query.order('id_notificacion', desc=True).range(offset, offset + limite - 1).execute()
         err = getattr(resp, 'error', None)
-        data = getattr(resp, 'data', None)
+        data = getattr(resp, 'data', None) or []
 
         if err:
             print(f"[notificacion_service] Error listando: {err}")
             return []
 
-        print(f"[notificacion_service] Obtenidas {len(data or [])} notificaciones")
-        return data or []
+        _enriquecer_con_estado(data)
+
+        print(f"[notificacion_service] Obtenidas {len(data)} notificaciones")
+        return data
 
     except Exception as e:
         print(f"[notificacion_service] Error en obtener_notificaciones: {e}")
