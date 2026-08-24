@@ -276,6 +276,86 @@ def guardar_remetro():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
+@servicio_trabajo_bp.route("/api/servicio/remetro/actualizar", methods=["POST"])
+def actualizar_remetro():
+    """
+    POST /api/servicio/remetro/actualizar
+    Actualiza medidas/descripcion/fecha de un servicio SIN registrar venta ni
+    pago (a diferencia de /guardar). Usado por el botón "Guardar" de la app
+    móvil al tomar las medidas reales en la visita.
+
+    Body: {
+        "notificacion_id": uuid,
+        "id_presupuesto": uuid (opcional, también actualiza esa fila),
+        "ancho": float,
+        "alto": float,
+        "descripcion": str,
+        "fecha_servicio": str
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        notificacion_id = data.get("notificacion_id")
+        if not notificacion_id:
+            return jsonify({"success": False, "message": "notificacion_id es obligatorio"}), 400
+
+        remetro_data = {
+            "remetro_ancho": data.get("ancho"),
+            "remetro_alto": data.get("alto"),
+            "remetro_descripcion": data.get("descripcion"),
+            "remetro_fecha_servicio": data.get("fecha_servicio"),
+        }
+
+        try:
+            supabase.table("notificacion") \
+                .update(remetro_data) \
+                .eq("id_notificacion", notificacion_id) \
+                .execute()
+        except Exception as rem_err:
+            print(f"[SERVICIO] ⚠️ Columnas remetro_* no disponibles ({rem_err}); usando fallback en descripcion")
+            notif_actual = supabase.table("notificacion") \
+                .select("descripcion") \
+                .eq("id_notificacion", notificacion_id) \
+                .limit(1) \
+                .execute()
+            actual_data = (getattr(notif_actual, "data", None) or [{}])[0]
+            descripcion_actual = (actual_data or {}).get("descripcion")
+            descripcion_merge = _merge_remetro_en_descripcion(descripcion_actual, remetro_data)
+            supabase.table("notificacion") \
+                .update({"descripcion": descripcion_merge}) \
+                .eq("id_notificacion", notificacion_id) \
+                .execute()
+
+        id_presupuesto = data.get("id_presupuesto")
+        if id_presupuesto:
+            update_presupuesto = {}
+            if data.get("ancho") is not None:
+                try:
+                    update_presupuesto["ancho"] = float(data.get("ancho"))
+                except (TypeError, ValueError):
+                    pass
+            if data.get("alto") is not None:
+                try:
+                    update_presupuesto["alto"] = float(data.get("alto"))
+                except (TypeError, ValueError):
+                    pass
+            if data.get("descripcion") is not None:
+                update_presupuesto["descripcion"] = str(data.get("descripcion")).strip()
+            if update_presupuesto:
+                try:
+                    supabase.table("presupuesto") \
+                        .update(update_presupuesto) \
+                        .eq("id_presupuesto", id_presupuesto) \
+                        .execute()
+                except Exception as pres_err:
+                    print(f"[SERVICIO] ⚠️ Error actualizando presupuesto {id_presupuesto}: {pres_err}")
+
+        return jsonify({"success": True, "message": "Datos guardados correctamente"}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
 @servicio_trabajo_bp.route("/api/servicio/remetro/<notificacion_id>", methods=["GET"])
 def obtener_remetro_guardado(notificacion_id: str):
     """
