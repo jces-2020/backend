@@ -75,6 +75,40 @@ def notificar_nuevo_servicio(
     })
 
 
+def notificar_operacion_creada(
+    nombre: str,
+    descripcion: Optional[str] = None,
+    tipo: str = 'servicio',
+    id_notificacion: Optional[str] = None,
+) -> None:
+    """Notifica en tiempo real (Pusher) y por push (OneSignal) que se creó un
+    nuevo servicio o entrega. Nunca lanza excepción: es best-effort, igual que
+    el resto de notificaciones (no debe romper el flujo de compra/presupuesto
+    que la llama).
+    """
+    try:
+        notificar_nuevo_servicio(
+            nombre=nombre,
+            descripcion=descripcion,
+            tipo=tipo,
+            nombre_cliente=nombre,
+            id_notificacion=id_notificacion,
+        )
+    except Exception as e:
+        print(f"[notificacion_service] Error notificando operacion por Pusher: {e}")
+
+    try:
+        from app.services.onesignal_service import (
+            obtener_todos_player_ids_desde_bd,
+            enviar_notificacion_operacion,
+        )
+        player_ids = obtener_todos_player_ids_desde_bd()
+        if player_ids:
+            enviar_notificacion_operacion(player_ids, nombre, descripcion or '', tipo)
+    except Exception as e:
+        print(f"[notificacion_service] Error notificando operacion por OneSignal: {e}")
+
+
 def notificar_estado_actualizado(
     nombre: Optional[str],
     estado: Optional[str] = None,

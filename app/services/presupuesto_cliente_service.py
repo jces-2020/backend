@@ -215,6 +215,16 @@ def guardar_multiples_presupuestos(
         }
         supabase.table('notificacion').insert(notif_insert).execute()
 
+        try:
+            from services.notificacion_service import notificar_operacion_creada
+            notificar_operacion_creada(
+                nombre=nombre_cliente,
+                descripcion=f"{len(pres_ids)} servicio(s) por S/ {round(total_general, 2)}",
+                tipo="servicio",
+            )
+        except Exception as _ne:
+            print(f"[presupuesto_cliente_service] Notificacion tiempo real/push omitida: {_ne}")
+
         status_msg = "Cuenta temporal creada" if cliente_creado else "Cliente encontrado"
         msg = f"{len(pres_ids)} servicio(s) guardado(s) correctamente. {status_msg}."
         return True, msg, pres_ids, cliente, cliente_creado, jwt_temporal

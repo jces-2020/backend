@@ -94,6 +94,77 @@ def enviar_notificacion_stock_bajo(
         return {'enviadas': 0, 'fallidas': len(player_ids)}
 
 
+def enviar_notificacion_operacion(
+    player_ids: List[str],
+    nombre_cliente: str,
+    descripcion: str,
+    tipo: str,
+) -> Dict[str, int]:
+    """
+    Envia notificacion push via OneSignal cuando se crea un nuevo servicio o
+    entrega (tabla 'notificacion'). Al tocarla, la app debe llevar a la
+    pantalla de Operaciones (ver 'data.tipo' = 'operacion').
+
+    Args:
+        player_ids: Lista de OneSignal Player IDs
+        nombre_cliente: Nombre del cliente asociado
+        descripcion: Descripción de la operación
+        tipo: 'entrega' o 'servicio'
+
+    Returns:
+        Dict con {'enviadas': X, 'fallidas': Y}
+    """
+    try:
+        app_id = os.getenv('ONESIGNAL_APP_ID', '')
+        api_key = os.getenv('ONESIGNAL_API_KEY', '')
+
+        if not player_ids:
+            print('[onesignal_service] No hay Player IDs para notificar (operacion)')
+            return {'enviadas': 0, 'fallidas': 0}
+
+        if not app_id or not api_key:
+            print('[onesignal_service] ERROR: ONESIGNAL_APP_ID o ONESIGNAL_API_KEY no configurados')
+            return {'enviadas': 0, 'fallidas': len(player_ids)}
+
+        headers = {
+            'Authorization': f'Basic {api_key}',
+            'Content-Type': 'application/json; charset=utf-8'
+        }
+
+        es_entrega = (tipo or '').strip().lower() == 'entrega'
+        titulo = 'Nueva entrega' if es_entrega else 'Nuevo servicio'
+        cuerpo = f'{nombre_cliente}: {descripcion}' if descripcion else nombre_cliente
+
+        payload = {
+            'app_id': app_id,
+            'include_player_ids': player_ids,
+            'headings': {'en': titulo, 'es': titulo},
+            'contents': {'en': cuerpo, 'es': cuerpo},
+            'data': {
+                'tipo': 'operacion',
+                'operacion_tipo': tipo,
+                'nombre': nombre_cliente,
+            },
+        }
+
+        response = requests.post(
+            f'{ONESIGNAL_API_URL}/notifications',
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            return {'enviadas': len(player_ids), 'fallidas': 0}
+        else:
+            print(f'[onesignal_service] Error en OneSignal API (operacion): {response.status_code} {response.text}')
+            return {'enviadas': 0, 'fallidas': len(player_ids)}
+
+    except Exception as e:
+        print(f'[onesignal_service] Exception enviando notificacion de operacion: {str(e)}')
+        return {'enviadas': 0, 'fallidas': len(player_ids)}
+
+
 def obtener_todos_player_ids_desde_bd() -> List[str]:
     """
     Obtiene todos los Player IDs registrados desde Supabase

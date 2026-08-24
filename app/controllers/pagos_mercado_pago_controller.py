@@ -1211,6 +1211,16 @@ def confirmar_compra():
                 notif_res = supabase.table("notificacion").insert(notif_payload).execute()
                 if not (notif_res.data or []):
                     print("[CONFIRMAR_COMPRA] WARN Notificacion no creada")
+                else:
+                    try:
+                        from app.services.notificacion_service import notificar_operacion_creada
+                        notificar_operacion_creada(
+                            nombre=nombre_cliente or "Cliente",
+                            descripcion=descripcion,
+                            tipo="entrega",
+                        )
+                    except Exception as _ne:
+                        print(f"[CONFIRMAR_COMPRA] Notificacion tiempo real/push omitida: {_ne}")
             except Exception as e:
                 # Log pero no fallar
                 print(f"[CONFIRMAR_COMPRA] Error creando notificacion: {str(e)}")

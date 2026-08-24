@@ -378,6 +378,16 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
         }
         supabase.table("notificacion").insert(notif_payload).execute()
 
+        try:
+            from services.notificacion_service import notificar_operacion_creada
+            notificar_operacion_creada(
+                nombre=cliente["nombre"],
+                descripcion=nombres_productos,
+                tipo="entrega",
+            )
+        except Exception as _ne:
+            print(f"[COMPRA_SERVICE] Notificacion tiempo real/push omitida: {_ne}")
+
         return {"ok": True, "cuenta_temporal": False}
     else:
         # Si NO existe cliente
@@ -545,6 +555,16 @@ def guardar_flujo_compra(cliente: Optional[dict], productos: List[dict], cortes:
             "venta_id": primera_venta_id,
         }
         supabase.table("notificacion").insert(notif_payload).execute()
+
+        try:
+            from services.notificacion_service import notificar_operacion_creada
+            notificar_operacion_creada(
+                nombre=nombre_completo,
+                descripcion=nombres_productos,
+                tipo="entrega",
+            )
+        except Exception as _ne:
+            print(f"[COMPRA_SERVICE] Notificacion tiempo real/push omitida: {_ne}")
 
         return {
             "ok": True,
