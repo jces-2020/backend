@@ -129,6 +129,13 @@ def registrar_retiro():
 
         caja_target_id = caja_target.get("id_caja") if caja_target else None
 
+        if not caja_target_id:
+            return jsonify({"success": False, "message": "No hay una caja activa para retirar"}), 400
+
+        subtotal_actual = float(caja_target.get("subtotal") or 0)
+        if float(monto) > subtotal_actual:
+            return jsonify({"success": False, "message": "No puede retirar más que el total en caja"}), 400
+
         # 1. Registrar retiro como gasto con tipo "Retiro" vinculando la caja activa
         gasto = create_gasto(
             monto=float(monto),
@@ -141,17 +148,10 @@ def registrar_retiro():
             return jsonify({"success": False, "message": "Error al registrar retiro"}), 500
 
         # 2. Actualizar tabla caja: restar el monto del subtotal de la caja vinculada
-        if caja_target_id:
-            nuevo_subtotal = float(caja_target.get("subtotal") or 0) - float(monto)
-            supabase.table("caja").update({
-                "subtotal": round(nuevo_subtotal, 2)
-            }).eq("id_caja", caja_target_id).execute()
-        else:
-            supabase.table("caja").insert({
-                "fecha": fecha_hoy,
-                "turno": "diurno",
-                "subtotal": round(-float(monto), 2)
-            }).execute()
+        nuevo_subtotal = subtotal_actual - float(monto)
+        supabase.table("caja").update({
+            "subtotal": round(nuevo_subtotal, 2)
+        }).eq("id_caja", caja_target_id).execute()
 
     except Exception as exc:
         print(f"[registrar_retiro] Error actualizando tabla caja: {exc}")
