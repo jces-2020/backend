@@ -217,17 +217,19 @@ def eliminar_producto(id_producto):
             resp = supabase.table('productos').delete().eq('id_producto', id_producto).execute()
         except Exception as delete_err:
             msg = str(delete_err)
-            if 'foreign key constraint' in msg.lower() or 'violates foreign key' in msg.lower():
-                ventas = supabase.table('venta').select('id_venta').eq('producto_id', id_producto).limit(1).execute()
-                if ventas.data:
-                    return jsonify({
-                        'error': 'No se puede eliminar: el producto tiene ventas registradas. '
-                                 'Pon la cantidad en 0 en lugar de eliminarlo si ya no se debe vender.'
-                    }), 409
+            if 'foreign key constraint' not in msg.lower() and 'violates foreign key' not in msg.lower():
+                raise
+
+            # El producto tiene ventas historicas: se desvinculan (producto_id a
+            # null) en vez de bloquear el borrado, para no perder el registro de
+            # la venta/monto pero sí poder eliminar el producto.
+            supabase.table('venta').update({'producto_id': None}).eq('producto_id', id_producto).execute()
+            try:
+                resp = supabase.table('productos').delete().eq('id_producto', id_producto).execute()
+            except Exception:
                 return jsonify({
                     'error': 'No se puede eliminar: el producto está siendo usado en otro registro del sistema.'
                 }), 409
-            raise
 
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
