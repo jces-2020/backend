@@ -99,7 +99,7 @@ def listar_productos():
     try:
         patron = request.args.get('buscar', '').strip()
         query = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, descripcion, '
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, descripcion, '
             'grosor, categoria_id, almacen_id, stock_id, IMG_P, '
             'categoria:categoria_id (descripcion), '
             'almacen:almacen_id (fila, columna)'
@@ -139,6 +139,7 @@ def crear_producto():
             'nombre':          data.get('nombre'),
             'cantidad':        data.get('cantidad'),
             'precio_unitario': data.get('precio_unitario'),
+            'precio_tienda':   data.get('precio_tienda') or None,
             'descripcion':     data.get('descripcion'),
             'grosor':          data.get('grosor'),
             'categoria_id':    data.get('categoria_id'),
@@ -203,20 +204,23 @@ def actualizar_producto(id_producto):
                 if isinstance(alm_data, list) and alm_data:
                     almacen_id = alm_data[0].get('id_almacen')
 
-        fields = ['codigo', 'nombre', 'cantidad', 'precio_unitario', 'descripcion',
+        fields = ['codigo', 'nombre', 'cantidad', 'precio_unitario', 'precio_tienda', 'descripcion',
                   'grosor', 'categoria_id', 'stock_id', 'IMG_P']
         payload = {f: body.get(f, curr.get(f)) for f in fields}
         payload['almacen_id'] = almacen_id
 
-        # Eliminar imagen anterior si cambia
         old_img = curr.get('IMG_P')
         new_img = payload.get('IMG_P')
-        if old_img and new_img and old_img != new_img:
-            _delete_storage_image(old_img)
 
         resp = supabase.table('productos').update(payload).eq('id_producto', id_producto).execute()
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
+
+        # Eliminar imagen anterior solo tras confirmar que el update se guardó:
+        # borrarla antes dejaba IMG_P apuntando a un archivo ya inexistente si
+        # el update fallaba (imagen rota en web y móvil).
+        if old_img and new_img and old_img != new_img:
+            _delete_storage_image(old_img)
 
         producto_actualizado = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
         if isinstance(producto_actualizado, dict):

@@ -619,6 +619,7 @@ def registrar_producto():
             'nombre': str(data.get('nombre') or '').strip(),
             'cantidad': int(float(data.get('cantidad', 0))),
             'precio_unitario': float(data.get('precio_unitario', 0)),
+            'precio_tienda': float(data['precio_tienda']) if data.get('precio_tienda') not in (None, '') else None,
             'descripcion': str(data.get('descripcion') or '').strip() or None,
             'grosor': str(data.get('grosor') or '').strip() or None,
             'categoria_id': data.get('categoria_id'),
@@ -801,6 +802,7 @@ def registrar_por_pasos():
                 'nombre': str(data.get('nombre') or '').strip(),
                 'cantidad': int(float(data.get('cantidad', 0))),
                 'precio_unitario': float(data.get('precio_unitario', 0)),
+                'precio_tienda': float(data['precio_tienda']) if data.get('precio_tienda') not in (None, '') else None,
                 'descripcion': str(data.get('descripcion') or '').strip() or None,
                 'grosor': str(data.get('grosor') or '').strip() or None,
                 'categoria_id': data.get('categoria_id'),
@@ -931,7 +933,7 @@ def listar_productos():
 
         # Construir query
         query = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, descripcion, grosor, categoria_id, IMG_P'
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, descripcion, grosor, categoria_id, IMG_P'
         )
 
         # Filtrar por categoría si se especifica
@@ -1097,14 +1099,14 @@ def actualizar_producto(producto_id: str):
 
         # Limpiar datos para actualizar
         payload = {}
-        campos_permitidos = ['nombre', 'codigo', 'cantidad', 'precio_unitario', 'descripcion',
+        campos_permitidos = ['nombre', 'codigo', 'cantidad', 'precio_unitario', 'precio_tienda', 'descripcion',
                            'grosor', 'categoria_id', 'stock_id', 'IMG_P']
 
         for campo in campos_permitidos:
             if campo in data and data[campo] not in (None, ''):
                 if campo in ['cantidad']:
                     payload[campo] = int(float(data[campo]))
-                elif campo in ['precio_unitario']:
+                elif campo in ['precio_unitario', 'precio_tienda']:
                     payload[campo] = float(data[campo])
                 elif campo in ['nombre', 'codigo', 'descripcion', 'grosor']:
                     payload[campo] = str(data[campo]).strip()
@@ -1340,12 +1342,12 @@ def buscar_producto():
 
         # Buscar en código (case-insensitive)
         resp1 = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, grosor, categoria_id, IMG_P'
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, grosor, categoria_id, IMG_P'
         ).ilike('codigo', f'%{query_str}%').limit(limit).execute()
 
         # Buscar en nombre (case-insensitive)
         resp2 = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, grosor, categoria_id, IMG_P'
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, grosor, categoria_id, IMG_P'
         ).ilike('nombre', f'%{query_str}%').limit(limit).execute()
 
         err1 = getattr(resp1, 'error', None) if resp1 is not None else None
