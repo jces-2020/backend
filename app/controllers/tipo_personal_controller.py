@@ -28,16 +28,34 @@ def _verify_legacy_mobile_token(token: str):
     if not token or not token.startswith('token_'):
         return None
 
-    area = None
     lower = token.lower()
-    if lower.startswith('token_almacen_'):
-        area = 'ALMACEN'
-    elif lower.startswith('token_operaciones_'):
-        area = 'OPERACIONES'
-    else:
+    area = None
+
+    aliases = {
+        'almacen': 'ALMACEN',
+        'administracion': 'ADMINISTRACION',
+        'admin': 'ADMINISTRACION',
+        'operaciones': 'OPERACIONES',
+        'obras': 'OBRAS',
+        'trabajo': 'TRABAJO',
+        'ventas': 'VENTAS',
+    }
+
+    for prefix, normalized in aliases.items():
+        if lower.startswith(f'token_{prefix}_'):
+            area = normalized
+            break
+
+    if not area:
         parts = token.split('_', 2)
         if len(parts) >= 3:
             area = _normalize_area(parts[1])
+            if area in ('ADMIN', 'ADMINISTRACION'):
+                area = 'ADMINISTRACION'
+            elif area == 'ALMACEN':
+                area = 'ALMACEN'
+            else:
+                area = aliases.get(area.lower(), area)
 
     if not area:
         return None
