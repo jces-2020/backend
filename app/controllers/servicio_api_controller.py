@@ -10,7 +10,7 @@ servicio_api_bp = Blueprint('servicio_api', __name__)
 def listar_tipos_servicio():
     if request.method == 'GET':
         try:
-            resp = supabase.table('tipo_servicio').select('id_tipo, descripcion').execute()
+            resp = supabase.table('tipo_servicio').select('id_tipo, descripcion, precio_estimado').execute()
             err = getattr(resp, 'error', None) if resp is not None else None
             data = getattr(resp, 'data', None) if resp is not None else None
             if err:
@@ -23,7 +23,10 @@ def listar_tipos_servicio():
             data = request.get_json()
             if not data or not data.get('descripcion'):
                 return jsonify({'error': 'Descripción requerida'}), 400
-            payload = {'descripcion': data.get('descripcion').strip()}
+            payload = {
+                'descripcion': data.get('descripcion').strip(),
+                'precio_estimado': data.get('precio_estimado') or 0
+            }
             resp = supabase.table('tipo_servicio').insert(payload).execute()
             err = getattr(resp, 'error', None) if resp is not None else None
             data_resp = getattr(resp, 'data', None) if resp is not None else None
@@ -32,6 +35,29 @@ def listar_tipos_servicio():
             return jsonify({'mensaje': 'Tipo de servicio registrado', 'data': data_resp or resp}), 201
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+@servicio_api_bp.route('/api/tipo_servicio/<tipo_id>', methods=['PUT'])
+def editar_tipo_servicio(tipo_id):
+    try:
+        data = request.get_json() or {}
+        payload = {}
+        if 'descripcion' in data:
+            descripcion = (data.get('descripcion') or '').strip()
+            if not descripcion:
+                return jsonify({'error': 'Descripción requerida'}), 400
+            payload['descripcion'] = descripcion
+        if 'precio_estimado' in data:
+            payload['precio_estimado'] = data.get('precio_estimado') or 0
+        if not payload:
+            return jsonify({'error': 'Nada para actualizar'}), 400
+        resp = supabase.table('tipo_servicio').update(payload).eq('id_tipo', tipo_id).execute()
+        err = getattr(resp, 'error', None) if resp is not None else None
+        data_resp = getattr(resp, 'data', None) if resp is not None else None
+        if err:
+            return jsonify({'error': str(err)}), 500
+        return jsonify({'mensaje': 'Tipo de servicio actualizado', 'data': data_resp or resp}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @servicio_api_bp.route('/api/tipo_servicio/<tipo_id>', methods=['DELETE'])
 def eliminar_tipo_servicio(tipo_id):
