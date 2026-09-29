@@ -251,3 +251,4 @@ def upload_servicio_image():
         return jsonify({'mensaje': 'Subida completa', 'url': url, 'path': remote_path})
     except Exception as e:
         return jsonify({'error': _mensaje_error_amigable(e)}), 500
+
