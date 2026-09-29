@@ -6,12 +6,18 @@ def get_all_servicios():
     """
     try:
         response = supabase.table('servicio').select('*').execute()
-        
+
         if not response.data:
             return []
 
+        tipos_resp = supabase.table('tipo_servicio').select('id_tipo, descripcion, precio_estimado').execute()
+        tipos_map = {t['id_tipo']: t for t in (tipos_resp.data or [])}
+
         data_with_urls = []
         for item in response.data:
+            tipo = tipos_map.get(item.get('tipo_servicio_id'))
+            item['categoria'] = tipo['descripcion'] if tipo else None
+            item['precio_estimado'] = tipo['precio_estimado'] if tipo else None
             public_url = None
             # La columna 'ING' contiene la ruta o la URL de la imagen
             if 'ING' in item and item['ING']:

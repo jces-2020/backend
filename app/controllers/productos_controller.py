@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 productos_bp = Blueprint('productos', __name__, url_prefix='/api/productos')
 
+# Estados de carrito_compras que significan "todavía no se concreta la venta":
+# mientras un producto esté en un carrito con uno de estos estados, no se
+# puede eliminar. Listo/Pagado (o sin carrito) se consideran venta concluida.
+CARRITO_ESTADOS_ACTIVOS = {'pendiente', 'proceso'}
+
 
 # ──────────────────────────── helpers ────────────────────────────
 
@@ -40,6 +45,31 @@ def _delete_storage_image(url):
         logger.info(f"🗑️ Imagen eliminada de storage: {path}")
     except Exception as e:
         logger.warning(f"No se pudo eliminar imagen {path}: {e}")
+
+
+def _estado_ventas_producto(id_producto):
+    """Devuelve (tiene_venta_activa, tiene_venta_concluida) para las ventas de un producto.
+
+    "Activa" = el carrito de esa venta sigue en Pendiente/Proceso (aún no se
+    concreta). El resto (Listo, Pagado, o venta sin carrito) se considera
+    concluida: se puede eliminar el producto perdiendo la trazabilidad.
+    """
+    ventas = supabase.table('venta').select('id_venta, carrito_id').eq('producto_id', id_producto).execute()
+    filas = ventas.data or []
+    if not filas:
+        return False, False
+
+    carrito_ids = list({v['carrito_id'] for v in filas if v.get('carrito_id')})
+    carritos_activos = set()
+    if carrito_ids:
+        carritos = supabase.table('carrito_compras').select('id_carrito, estado').in_('id_carrito', carrito_ids).execute()
+        for c in (carritos.data or []):
+            if str(c.get('estado') or '').strip().lower() in CARRITO_ESTADOS_ACTIVOS:
+                carritos_activos.add(c['id_carrito'])
+
+    tiene_activa = any(v.get('carrito_id') in carritos_activos for v in filas)
+    tiene_concluida = any(v.get('carrito_id') not in carritos_activos for v in filas)
+    return tiene_activa, tiene_concluida
 
 
 def _map_producto(p):
@@ -69,7 +99,7 @@ def listar_productos():
     try:
         patron = request.args.get('buscar', '').strip()
         query = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, descripcion, '
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, descripcion, '
             'grosor, categoria_id, almacen_id, stock_id, IMG_P, '
             'categoria:categoria_id (descripcion), '
             'almacen:almacen_id (fila, columna)'
@@ -109,6 +139,7 @@ def crear_producto():
             'nombre':          data.get('nombre'),
             'cantidad':        data.get('cantidad'),
             'precio_unitario': data.get('precio_unitario'),
+            'precio_tienda':   data.get('precio_tienda') or None,
             'descripcion':     data.get('descripcion'),
             'grosor':          data.get('grosor'),
             'categoria_id':    data.get('categoria_id'),
@@ -173,20 +204,23 @@ def actualizar_producto(id_producto):
                 if isinstance(alm_data, list) and alm_data:
                     almacen_id = alm_data[0].get('id_almacen')
 
-        fields = ['codigo', 'nombre', 'cantidad', 'precio_unitario', 'descripcion',
+        fields = ['codigo', 'nombre', 'cantidad', 'precio_unitario', 'precio_tienda', 'descripcion',
                   'grosor', 'categoria_id', 'stock_id', 'IMG_P']
         payload = {f: body.get(f, curr.get(f)) for f in fields}
         payload['almacen_id'] = almacen_id
 
-        # Eliminar imagen anterior si cambia
         old_img = curr.get('IMG_P')
         new_img = payload.get('IMG_P')
-        if old_img and new_img and old_img != new_img:
-            _delete_storage_image(old_img)
 
         resp = supabase.table('productos').update(payload).eq('id_producto', id_producto).execute()
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
+
+        # Eliminar imagen anterior solo tras confirmar que el update se guardó:
+        # borrarla antes dejaba IMG_P apuntando a un archivo ya inexistente si
+        # el update fallaba (imagen rota en web y móvil).
+        if old_img and new_img and old_img != new_img:
+            _delete_storage_image(old_img)
 
         producto_actualizado = resp.data[0] if isinstance(resp.data, list) and resp.data else resp.data
         if isinstance(producto_actualizado, dict):
@@ -203,11 +237,26 @@ def eliminar_producto(id_producto):
     try:
         curr_resp = supabase.table('productos').select('*').eq('id_producto', id_producto).single().execute()
         curr = curr_resp.data
-        if curr and curr.get('IMG_P'):
-            _delete_storage_image(curr['IMG_P'])
+        if not curr:
+            return jsonify({'error': 'Producto no encontrado'}), 404
 
-        if curr:
-            registrar_eliminacion_producto(id_producto, curr)
+        tiene_activa, tiene_concluida = _estado_ventas_producto(id_producto)
+        if tiene_activa:
+            return jsonify({
+                'error': 'No se puede eliminar: el producto tiene una venta en proceso (carrito activo).'
+            }), 409
+
+        forzar = str(request.args.get('forzar', '')).strip().lower() in ('1', 'true')
+        if tiene_concluida and not forzar:
+            return jsonify({
+                'error': 'Este producto tiene ventas registradas. Si lo eliminas, ya no se podrá '
+                         'identificar en el historial de esas ventas. ¿Deseas continuar?',
+                'requiere_confirmacion': True
+            }), 409
+
+        if curr.get('IMG_P'):
+            _delete_storage_image(curr['IMG_P'])
+        registrar_eliminacion_producto(id_producto, curr)
 
         # detalle_producto referencia a productos por llave foránea: hay que
         # borrar esa fila primero o Postgres rechaza el DELETE de productos.
@@ -219,25 +268,16 @@ def eliminar_producto(id_producto):
             msg = str(delete_err)
             if 'foreign key constraint' not in msg.lower() and 'violates foreign key' not in msg.lower():
                 raise
-
-            # No se puede desvincular: un trigger en 'venta' exige que toda
-            # venta de tipo producto tenga producto_id (no permite null), así
-            # que un producto con ventas reales no se puede eliminar sin
-            # perder ese historial. Se bloquea con mensaje claro.
-            ventas = supabase.table('venta').select('id_venta').eq('producto_id', id_producto).limit(1).execute()
-            if ventas.data:
-                return jsonify({
-                    'error': 'No se puede eliminar: el producto tiene ventas registradas. '
-                             'Pon la cantidad en 0 en lugar de eliminarlo si ya no se debe vender.'
-                }), 409
             return jsonify({
-                'error': 'No se puede eliminar: el producto está siendo usado en otro registro del sistema.'
+                'error': 'No se puede eliminar: la base de datos aún bloquea productos con ventas '
+                         '(falta aplicar el ajuste de la FK/trigger de venta.producto_id en Supabase).'
             }), 409
 
         if getattr(resp, 'error', None):
             return jsonify({'error': str(resp.error)}), 500
         return jsonify({'success': True, 'message': 'Producto eliminado'}), 200
     except Exception as e:
+        logger.error(f"Error en eliminar_producto: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 

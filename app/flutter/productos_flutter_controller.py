@@ -20,6 +20,10 @@ import unicodedata
 
 productos_flutter_bp = Blueprint('productos_flutter', __name__, url_prefix='/api/flutter/productos')
 
+# Estados de carrito_compras que significan "todavía no se concreta la venta"
+# (ver misma lógica en app/controllers/productos_controller.py).
+CARRITO_ESTADOS_ACTIVOS = {'pendiente', 'proceso'}
+
 # ── Reglas de validación de campos ──────────────────────────────────────────
 CODIGO_MAX_LEN = 50
 DESCRIPCION_MAX_LEN = 500
@@ -420,6 +424,32 @@ def _crear_almacen(fila: Optional[str], columna: Optional[str]) -> Tuple[Optiona
         return None, str(e)
 
 
+def _estado_ventas_producto(producto_id: str) -> Tuple[bool, bool]:
+    """Devuelve (tiene_venta_activa, tiene_venta_concluida) para las ventas de un producto.
+
+    "Activa" = el carrito de esa venta sigue en Pendiente/Proceso (aún no se
+    concreta). El resto (Listo, Pagado, o venta sin carrito) se considera
+    concluida: se puede eliminar el producto perdiendo la trazabilidad.
+    Ver misma lógica en app/controllers/productos_controller.py.
+    """
+    ventas = supabase.table('venta').select('id_venta, carrito_id').eq('producto_id', producto_id).execute()
+    filas = ventas.data or []
+    if not filas:
+        return False, False
+
+    carrito_ids = list({v['carrito_id'] for v in filas if v.get('carrito_id')})
+    carritos_activos = set()
+    if carrito_ids:
+        carritos = supabase.table('carrito_compras').select('id_carrito, estado').in_('id_carrito', carrito_ids).execute()
+        for c in (carritos.data or []):
+            if str(c.get('estado') or '').strip().lower() in CARRITO_ESTADOS_ACTIVOS:
+                carritos_activos.add(c['id_carrito'])
+
+    tiene_activa = any(v.get('carrito_id') in carritos_activos for v in filas)
+    tiene_concluida = any(v.get('carrito_id') not in carritos_activos for v in filas)
+    return tiene_activa, tiene_concluida
+
+
 def _adjuntar_ubicacion_almacen(producto: Dict[str, Any]) -> None:
     """Agrega 'fila'/'columna' al dict del producto leyendo la tabla 'almacen'
     a través de producto['almacen_id']. Se usa al devolver un producto para
@@ -589,6 +619,7 @@ def registrar_producto():
             'nombre': str(data.get('nombre') or '').strip(),
             'cantidad': int(float(data.get('cantidad', 0))),
             'precio_unitario': float(data.get('precio_unitario', 0)),
+            'precio_tienda': float(data['precio_tienda']) if data.get('precio_tienda') not in (None, '') else None,
             'descripcion': str(data.get('descripcion') or '').strip() or None,
             'grosor': str(data.get('grosor') or '').strip() or None,
             'categoria_id': data.get('categoria_id'),
@@ -598,7 +629,15 @@ def registrar_producto():
         }
 
         # Insertar en Supabase
-        resp = supabase.table('productos').insert(payload).execute()
+        try:
+            resp = supabase.table('productos').insert(payload).execute()
+        except Exception as insert_err:
+            if 'productos_codigo_key' in str(insert_err) or 'duplicate key' in str(insert_err).lower():
+                return jsonify({
+                    "success": False,
+                    "message": f"Ya existe un producto con el código '{payload['codigo']}'"
+                }), 409
+            raise
         err = getattr(resp, 'error', None) if resp is not None else None
         data_resp = getattr(resp, 'data', None) if resp is not None else None
 
@@ -763,6 +802,7 @@ def registrar_por_pasos():
                 'nombre': str(data.get('nombre') or '').strip(),
                 'cantidad': int(float(data.get('cantidad', 0))),
                 'precio_unitario': float(data.get('precio_unitario', 0)),
+                'precio_tienda': float(data['precio_tienda']) if data.get('precio_tienda') not in (None, '') else None,
                 'descripcion': str(data.get('descripcion') or '').strip() or None,
                 'grosor': str(data.get('grosor') or '').strip() or None,
                 'categoria_id': data.get('categoria_id'),
@@ -772,7 +812,16 @@ def registrar_por_pasos():
             }
 
             # Insertar producto
-            resp = supabase.table('productos').insert(payload).execute()
+            try:
+                resp = supabase.table('productos').insert(payload).execute()
+            except Exception as insert_err:
+                if 'productos_codigo_key' in str(insert_err) or 'duplicate key' in str(insert_err).lower():
+                    return jsonify({
+                        "success": False,
+                        "paso": 2,
+                        "message": f"Ya existe un producto con el código '{payload['codigo']}'"
+                    }), 409
+                raise
             err = getattr(resp, 'error', None) if resp is not None else None
             data_resp = getattr(resp, 'data', None) if resp is not None else None
 
@@ -884,7 +933,7 @@ def listar_productos():
 
         # Construir query
         query = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, descripcion, grosor, categoria_id, IMG_P'
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, descripcion, grosor, categoria_id, IMG_P'
         )
 
         # Filtrar por categoría si se especifica
@@ -1050,14 +1099,14 @@ def actualizar_producto(producto_id: str):
 
         # Limpiar datos para actualizar
         payload = {}
-        campos_permitidos = ['nombre', 'codigo', 'cantidad', 'precio_unitario', 'descripcion',
+        campos_permitidos = ['nombre', 'codigo', 'cantidad', 'precio_unitario', 'precio_tienda', 'descripcion',
                            'grosor', 'categoria_id', 'stock_id', 'IMG_P']
 
         for campo in campos_permitidos:
             if campo in data and data[campo] not in (None, ''):
                 if campo in ['cantidad']:
                     payload[campo] = int(float(data[campo]))
-                elif campo in ['precio_unitario']:
+                elif campo in ['precio_unitario', 'precio_tienda']:
                     payload[campo] = float(data[campo])
                 elif campo in ['nombre', 'codigo', 'descripcion', 'grosor']:
                     payload[campo] = str(data[campo]).strip()
@@ -1144,10 +1193,10 @@ def eliminar_producto(producto_id: str):
         "message": "Producto eliminado exitosamente"
     }
 
-    Si el producto tiene ventas registradas (tabla 'venta' lo referencia por
-    llave foránea), no se elimina: responde 409 con un mensaje claro. Un
-    trigger en 'venta' exige producto_id no nulo en ventas de tipo producto,
-    así que no se puede desvincular la venta para permitir el borrado.
+    Si el producto tiene una venta con carrito aún activo (Pendiente/Proceso),
+    no se elimina: responde 409. Si tiene ventas ya concluidas, responde 409
+    con `requiere_confirmacion: true` para que el cliente confirme y reintente
+    con `?forzar=1` (perderá la trazabilidad de esas ventas).
     """
     try:
         # Verificar que existe y obtener sus datos
@@ -1159,6 +1208,22 @@ def eliminar_producto(producto_id: str):
                 "success": False,
                 "message": "Producto no encontrado"
             }), 404
+
+        tiene_activa, tiene_concluida = _estado_ventas_producto(producto_id)
+        if tiene_activa:
+            return jsonify({
+                "success": False,
+                "message": "No se puede eliminar: el producto tiene una venta en proceso (carrito activo)."
+            }), 409
+
+        forzar = str(request.args.get('forzar', '')).strip().lower() in ('1', 'true')
+        if tiene_concluida and not forzar:
+            return jsonify({
+                "success": False,
+                "message": "Este producto tiene ventas registradas. Si lo eliminas, ya no se podrá "
+                           "identificar en el historial de esas ventas. ¿Deseas continuar?",
+                "requiere_confirmacion": True
+            }), 409
 
         # Registrar eliminación en reportes (antes de eliminar)
         registrar_eliminacion_producto(producto_id, existe_data)
@@ -1181,20 +1246,10 @@ def eliminar_producto(producto_id: str):
             msg = str(delete_err)
             if 'foreign key constraint' not in msg.lower() and 'violates foreign key' not in msg.lower():
                 raise
-
-            # No se puede desvincular: un trigger en 'venta' exige que toda
-            # venta de tipo producto tenga producto_id (no permite null), así
-            # que un producto con ventas reales no se puede eliminar sin
-            # perder ese historial. Se bloquea con mensaje claro.
-            ventas = supabase.table('venta').select('id_venta').eq('producto_id', producto_id).limit(1).execute()
-            if ventas.data:
-                return jsonify({
-                    "success": False,
-                    "message": "No se puede eliminar: este producto tiene ventas registradas asociadas."
-                }), 409
             return jsonify({
                 "success": False,
-                "message": "No se puede eliminar: el producto está siendo usado en otro registro del sistema."
+                "message": "No se puede eliminar: la base de datos aún bloquea productos con ventas "
+                           "(falta aplicar el ajuste de la FK/trigger de venta.producto_id en Supabase)."
             }), 409
 
         err = getattr(resp, 'error', None) if resp is not None else None
@@ -1287,12 +1342,12 @@ def buscar_producto():
 
         # Buscar en código (case-insensitive)
         resp1 = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, grosor, categoria_id, IMG_P'
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, grosor, categoria_id, IMG_P'
         ).ilike('codigo', f'%{query_str}%').limit(limit).execute()
 
         # Buscar en nombre (case-insensitive)
         resp2 = supabase.table('productos').select(
-            'id_producto, codigo, nombre, cantidad, precio_unitario, grosor, categoria_id, IMG_P'
+            'id_producto, codigo, nombre, cantidad, precio_unitario, precio_tienda, grosor, categoria_id, IMG_P'
         ).ilike('nombre', f'%{query_str}%').limit(limit).execute()
 
         err1 = getattr(resp1, 'error', None) if resp1 is not None else None
