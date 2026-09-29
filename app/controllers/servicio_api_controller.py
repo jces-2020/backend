@@ -2,9 +2,30 @@ from flask import Blueprint, request, jsonify
 from app.services.supabase_client import supabase
 from werkzeug.utils import secure_filename
 import mimetypes
+import re
 from uuid import uuid4
 
 servicio_api_bp = Blueprint('servicio_api', __name__)
+
+
+def _mensaje_error_amigable(e: Exception) -> str:
+    """Traduce errores crudos de Postgres/Supabase a mensajes claros en español."""
+    texto = str(e)
+
+    m = re.search(r'value too long for type character varying\((\d+)\)', texto)
+    if m:
+        return f'El texto ingresado supera el límite de {m.group(1)} caracteres permitido.'
+
+    if 'duplicate key value violates unique constraint' in texto:
+        return 'Ya existe un registro con esos datos.'
+
+    if 'violates not-null constraint' in texto:
+        return 'Falta completar un campo obligatorio.'
+
+    if 'violates foreign key constraint' in texto:
+        return 'El tipo de servicio seleccionado no es válido.'
+
+    return texto
 
 @servicio_api_bp.route('/api/tipo_servicio', methods=['GET', 'POST'])
 def listar_tipos_servicio():
@@ -31,10 +52,33 @@ def listar_tipos_servicio():
             err = getattr(resp, 'error', None) if resp is not None else None
             data_resp = getattr(resp, 'data', None) if resp is not None else None
             if err:
-                return jsonify({'error': str(err)}), 500
+                return jsonify({'error': _mensaje_error_amigable(Exception(str(err)))}), 500
             return jsonify({'mensaje': 'Tipo de servicio registrado', 'data': data_resp or resp}), 201
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': _mensaje_error_amigable(e)}), 500
+
+@servicio_api_bp.route('/api/tipo_servicio/<tipo_id>', methods=['PUT'])
+def editar_tipo_servicio(tipo_id):
+    try:
+        data = request.get_json() or {}
+        payload = {}
+        if 'descripcion' in data:
+            descripcion = (data.get('descripcion') or '').strip()
+            if not descripcion:
+                return jsonify({'error': 'Descripción requerida'}), 400
+            payload['descripcion'] = descripcion
+        if 'precio_estimado' in data:
+            payload['precio_estimado'] = data.get('precio_estimado') or 0
+        if not payload:
+            return jsonify({'error': 'Nada para actualizar'}), 400
+        resp = supabase.table('tipo_servicio').update(payload).eq('id_tipo', tipo_id).execute()
+        err = getattr(resp, 'error', None) if resp is not None else None
+        data_resp = getattr(resp, 'data', None) if resp is not None else None
+        if err:
+            return jsonify({'error': _mensaje_error_amigable(Exception(str(err)))}), 500
+        return jsonify({'mensaje': 'Tipo de servicio actualizado', 'data': data_resp or resp}), 200
+    except Exception as e:
+        return jsonify({'error': _mensaje_error_amigable(e)}), 500
 
 @servicio_api_bp.route('/api/tipo_servicio/<tipo_id>', methods=['PUT'])
 def editar_tipo_servicio(tipo_id):
@@ -104,10 +148,60 @@ def registrar_servicio():
         err = getattr(resp, 'error', None) if resp is not None else None
         data_resp = getattr(resp, 'data', None) if resp is not None else None
         if err:
-            return jsonify({'error': str(err), 'payload': payload}), 500
+            return jsonify({'error': _mensaje_error_amigable(Exception(str(err)))}), 500
         return jsonify({'mensaje': 'Servicio registrado', 'data': data_resp or resp}), 201
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _mensaje_error_amigable(e)}), 500
+
+@servicio_api_bp.route('/api/servicio/<servicio_id>', methods=['GET'])
+def obtener_servicio(servicio_id):
+    try:
+        resp = supabase.table('servicio').select('*').eq('id_servicio', servicio_id).execute()
+        data = getattr(resp, 'data', None) if resp is not None else None
+        if not data:
+            return jsonify({'error': 'Servicio no encontrado'}), 404
+        return jsonify(data[0])
+    except Exception as e:
+        return jsonify({'error': _mensaje_error_amigable(e)}), 500
+
+@servicio_api_bp.route('/api/servicio/<servicio_id>', methods=['PUT'])
+def editar_servicio(servicio_id):
+    try:
+        data = request.get_json(silent=True) or {}
+        payload = {}
+
+        if 'nombre' in data:
+            nombre = (data.get('nombre') or '').strip()
+            if not nombre:
+                return jsonify({'error': 'El nombre del servicio es obligatorio'}), 400
+            payload['nombre'] = nombre
+
+        if 'descripcion' in data:
+            payload['descripcion'] = (data.get('descripcion') or '').strip()
+
+        if 'tipo_servicio_id' in data:
+            tipo_servicio_id = (data.get('tipo_servicio_id') or '').strip() or None
+            if tipo_servicio_id:
+                tipo_resp = supabase.table('tipo_servicio').select('id_tipo').eq('id_tipo', tipo_servicio_id).execute()
+                tipo_data = getattr(tipo_resp, 'data', None) if tipo_resp is not None else None
+                if not tipo_data:
+                    return jsonify({'error': 'Tipo de servicio no válido'}), 400
+            payload['tipo_servicio_id'] = tipo_servicio_id
+
+        if 'ING' in data:
+            payload['ING'] = (data.get('ING') or '').strip() or None
+
+        if not payload:
+            return jsonify({'error': 'Nada para actualizar'}), 400
+
+        resp = supabase.table('servicio').update(payload).eq('id_servicio', servicio_id).execute()
+        err = getattr(resp, 'error', None) if resp is not None else None
+        data_resp = getattr(resp, 'data', None) if resp is not None else None
+        if err:
+            return jsonify({'error': _mensaje_error_amigable(Exception(str(err)))}), 500
+        return jsonify({'mensaje': 'Servicio actualizado', 'data': data_resp or resp}), 200
+    except Exception as e:
+        return jsonify({'error': _mensaje_error_amigable(e)}), 500
 
 @servicio_api_bp.route('/api/servicio/upload-image', methods=['POST'])
 def upload_servicio_image():
@@ -125,7 +219,7 @@ def upload_servicio_image():
         file_bytes = file.read()
         max_bytes = 10 * 1024 * 1024
         if len(file_bytes) > max_bytes:
-            return jsonify({'error': 'La imagen supera 10MB'}), 413
+            return jsonify({'error': 'La imagen supera el límite de 10MB. Elige una imagen más liviana.'}), 413
 
         content_type, _ = mimetypes.guess_type(filename)
         if content_type is None:
@@ -156,4 +250,4 @@ def upload_servicio_image():
             url = url_obj.get('publicUrl') or url_obj.get('publicURL') or url_obj.get('public_url')
         return jsonify({'mensaje': 'Subida completa', 'url': url, 'path': remote_path})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': _mensaje_error_amigable(e)}), 500
